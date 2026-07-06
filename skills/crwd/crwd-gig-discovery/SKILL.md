@@ -50,8 +50,11 @@ Find gigs and explain them against the member's **real** data — not in the abs
    for the member to ask "where do I buy it?" Links are helpful; give the real `product_url`,
    don't just name the product. (Only skip them if the gig genuinely has no product, or the
    member explicitly says they just want the list.)
-   When `name_link` is present, **copy it verbatim** for the gig title — do not
-   paraphrase the name or build your own markdown link. Use `product_url` only for buy links.
+   When listing multiple gigs, paste the `gig_list_markdown` field from `crwd_db`
+   **verbatim** (one linked bullet per line). If you must write your own bullets, copy
+   each `name` / `gig_name` field exactly — it is already a markdown gig-page link.
+   Never comma-separate plain gig titles. Never hyperlink store names (Walmart, Target,
+   etc.) or product names — use `product_url` only for buy links.
 6. **For a live (in-store / `irl`) gig, help them get to the store.** The gig data names the
    retailer (`stores[].store_name`) and, for `irl` gigs, an `address`/`city`/`state`/
    `postal_code`. Surface that store info by default when you describe a live gig.
@@ -89,7 +92,7 @@ For the deeper lifecycle detail, load
   gigs — without it you may show gigs they've already joined.
 - **"Show me more" means paginate** — pass `offset = next_offset` from the last
   `list_active_gigs` result; don't re-run offset 0 and conclude there are no more.
-  Use `name_link` from that fresh response — never paraphrase gig names from memory.
+  Copy `gig_list_markdown` verbatim when listing gigs — never comma-separate plain titles.
 - Only tell the member they've seen all available gigs when `has_more` is false.
 - `get_gig_details` returns *candidates*; picking the wrong `_id` sends the member to the
   wrong gig. Confirm first.

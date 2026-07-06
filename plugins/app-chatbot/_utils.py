@@ -146,10 +146,8 @@ def gig_proof_types(doc: Dict[str, Any]) -> List[str]:
 
 
 def format_gig_item(doc: Dict[str, Any]) -> Dict[str, Any]:
-    from tools.crwd_urls import attach_gig_url
-
     image = doc.get("image") or ""
-    return attach_gig_url({
+    return {
         "_id": str(doc.get("_id", "")),
         "name": doc.get("name"),
         "subtitle": doc.get("subtitle"),
@@ -164,4 +162,4 @@ def format_gig_item(doc: Dict[str, Any]) -> Dict[str, Any]:
         "image_url": image,
         "number_of_people": doc.get("number_of_people"),
         "client_id": str(doc.get("client_id")) if doc.get("client_id") else None,
-    })
+    }

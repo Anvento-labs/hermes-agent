@@ -26,7 +26,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
-from tools.crwd_urls import attach_gig_url
+from tools.crwd_urls import attach_gig_url, build_gig_list_markdown
 from tools.lazy_deps import FeatureUnavailable, ensure
 from tools.registry import registry, tool_error
 
@@ -213,7 +213,7 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
             "address": gig.get("address"), "city": gig.get("city"),
             "state": gig.get("state"), "postal_code": gig.get("postal_code"),
         }
-    return attach_gig_url(_serialize_doc(out))
+    return attach_gig_url(_serialize_doc(out), inline_name=True)
 
 
 # --- Actions ---
@@ -243,8 +243,8 @@ def _get_enrolled_gig_ids(user_id: str) -> set[str]:
     return enrolled
 
 
-def _list_active_gigs(limit: int = 5, user_id: str = "", offset: int = 0) -> str:
-    row_limit = max(1, min(int(limit or 5), _HARD_LIMIT))
+def _list_active_gigs(limit: int = 20, user_id: str = "", offset: int = 0) -> str:
+    row_limit = max(1, min(int(limit or 20), _HARD_LIMIT))
     row_offset = max(0, int(offset or 0))
     query: Dict[str, Any] = dict(_open_gig_filter())
     user_id = (user_id or "").strip()
@@ -278,6 +278,7 @@ def _list_active_gigs(limit: int = 5, user_id: str = "", offset: int = 0) -> str
     }
     if user_id:
         payload["excluded_enrolled_count"] = excluded_count
+    payload["gig_list_markdown"] = build_gig_list_markdown(items)
     return json.dumps(payload, ensure_ascii=False)
 
 
@@ -341,7 +342,7 @@ def _get_gig_details(query: str, top_n: int = 3) -> str:
             "name": gig.get("name"),
             "status": gig.get("status"),
             "end_date": _serialize_doc(gig.get("end_date")),
-        }))
+        }, inline_name=True))
     return json.dumps(
         {"_type": "gig_match_candidates", "query": query, "items": items},
         ensure_ascii=False,
@@ -436,8 +437,15 @@ def _get_user_gigs(user_id: str, limit: int = 10) -> str:
             "membership": _serialize_doc(m),
             "gig": gigs_by_id.get(str(m.get("crwd_id"))),
         })
+    gig_rows = [row["gig"] for row in items if isinstance(row.get("gig"), dict)]
     return json.dumps(
-        {"_type": "user_gigs", "items": items, "error": None}, ensure_ascii=False
+        {
+            "_type": "user_gigs",
+            "items": items,
+            "gig_list_markdown": build_gig_list_markdown(gig_rows),
+            "error": None,
+        },
+        ensure_ascii=False,
     )
 
 
@@ -918,12 +926,13 @@ def build_user_gig_status(
             "next_step": stage_info["next_step"],
             "buy_link": stage_info.get("buy_link"),
             "handoff_recommended": stage_info.get("handoff_recommended", False),
-        }))
+        }, inline_name=True))
 
     return {
         "_type": "user_gig_status",
         "items": items,
         "active_gigs": items,
+        "gig_list_markdown": build_gig_list_markdown(items, name_key="gig_name"),
         "count": len(items),
         "error": None,
     }
@@ -1093,7 +1102,7 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
     try:
         if action == "list_active_gigs":
             return _list_active_gigs(
-                limit=args.get("limit", 5),
+                limit=args.get("limit", 20),
                 user_id=args.get("user_id", ""),
                 offset=args.get("offset", 0),
             )
@@ -1177,7 +1186,7 @@ CRWD_DB_SCHEMA = {
                     "get_user_receipts", "get_user_notifications", "custom_query",
                 ],
             },
-            "limit": {"type": "integer", "description": "max rows per page (capped at 20; list_active_gigs default 5)"},
+            "limit": {"type": "integer", "description": "max rows per page (capped at 20; list_active_gigs default 20)"},
             "offset": {
                 "type": "integer",
                 "description": (

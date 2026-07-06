@@ -1,26 +1,57 @@
-"""Apply pre-built gig name_link markdown in Chatwoot replies.
+"""Scoped gig title linking for Chatwoot replies.
 
-Tool payloads include ``name_link`` at retrieval time (see ``tools/crwd_urls.py``).
-This module collects those links during the turn and substitutes plain gig names in
-the final assistant reply — without rewriting existing product/external markdown links.
+Gig page links are built at ``crwd_db`` fetch time (``attach_gig_url`` + ``gig_list_markdown``).
+This module registers those fetch-time links and applies them when the model paraphrases
+titles — bullet titles only before em/en dashes; comma lists become linked bullet lists.
+Store names in line bodies are never globally replaced.
 """
 
 from __future__ import annotations
 
 import json
-import logging
 import re
 from contextvars import ContextVar
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from tools.crwd_urls import crwd_app_base_url
+from tools.crwd_db_tool import _MATCH_FLOOR, _normalize, _score
+from tools.crwd_urls import crwd_app_base_url, name_aliases
 
-logger = logging.getLogger(__name__)
+_FUZZY_LINK_FLOOR = max(_MATCH_FLOOR, 0.85)
 
-_AUTO_LINK_RE = re.compile(r"<https?://[^>]+>")
+_BULLET_TITLE_RE = re.compile(
+    r"^(?P<indent>\s*[-*]\s+)(?P<title>.+?)(?P<sep>\s+[—–]\s+)(?P<body>.+)$",
+    re.MULTILINE,
+)
+_GIG_MD_LINE_RE = re.compile(r"^- \[(?P<label>[^\]]+)\]\((?P<url>[^)]+)\)")
 
-# display key (DB name or alias) -> pre-built name_link markdown
 _turn_name_links: ContextVar[Dict[str, str]] = ContextVar("chatwoot_turn_name_links", default={})
+_turn_gig_list_markdown: ContextVar[str] = ContextVar("chatwoot_turn_gig_list_markdown", default="")
+_turn_md_pairs: ContextVar[List[Tuple[str, str]]] = ContextVar("chatwoot_turn_md_pairs", default=[])
+
+_DEBUG_LOG_PATH = (
+    Path(__file__).resolve().parents[3] / ".cursor" / "debug-c27c0e.log"
+)
+
+
+def _debug_log(hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    # #region agent log
+    try:
+        import time
+
+        payload = {
+            "sessionId": "c27c0e",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data,
+            "timestamp": int(time.time() * 1000),
+        }
+        with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
 
 def _is_chatwoot(platform: Any) -> bool:
@@ -35,37 +66,63 @@ def _is_chatwoot(platform: Any) -> bool:
 
 
 def reset_turn_registry() -> None:
-    """Clear collected name_link mappings for a new Chatwoot turn."""
     _turn_name_links.set({})
+    _turn_gig_list_markdown.set("")
+    _turn_md_pairs.set([])
 
 
 def _registry() -> Dict[str, str]:
     return dict(_turn_name_links.get({}))
 
 
-def _name_aliases(name: str) -> List[str]:
-    """Common paraphrase variants for the same gig title."""
-    aliases = [name]
-    collapsed = re.sub(r"\s*-\s*", " ", name).strip()
-    if collapsed and collapsed not in aliases:
-        aliases.append(collapsed)
-    return aliases
+def _md_pairs() -> List[Tuple[str, str]]:
+    return list(_turn_md_pairs.get([]))
+
+
+def _link_with_label(stored_link: str, label: str) -> str:
+    match = re.match(r"\[([^\]]+)\]\(([^)]+)\)", stored_link)
+    if not match:
+        return stored_link
+    return f"[{label}]({match.group(2)})"
 
 
 def record_name_link(name: Any, name_link: Any) -> None:
-    """Register one or more display keys for a pre-built name_link."""
     link = str(name_link or "").strip()
     label = str(name or "").strip()
     if not label or not link:
         return
     current = dict(_turn_name_links.get({}))
-    for key in _name_aliases(label):
+    for key in name_aliases(label):
         current[key] = link
+        current[key.casefold()] = link
+    norm = _normalize(label)
+    if norm:
+        current[norm] = link
     _turn_name_links.set(current)
 
 
+def _ingest_gig_list_markdown(md: str) -> None:
+    md = (md or "").strip()
+    if not md:
+        return
+    prev = _turn_gig_list_markdown.get("")
+    combined = f"{prev}\n{md}".strip() if prev else md
+    _turn_gig_list_markdown.set(combined)
+    pairs = list(_turn_md_pairs.get([]))
+    seen_urls = {url for _, url in pairs}
+    for line in md.splitlines():
+        match = _GIG_MD_LINE_RE.match(line.strip())
+        if not match:
+            continue
+        label, url = match.group("label"), match.group("url")
+        record_name_link(label, f"[{label}]({url})")
+        if url not in seen_urls:
+            pairs.append((label, url))
+            seen_urls.add(url)
+    _turn_md_pairs.set(pairs)
+
+
 def record_links_from_payload(payload: Any) -> None:
-    """Extract name_link fields from crwd_db JSON or gig context rows."""
     if isinstance(payload, list):
         for item in payload:
             record_links_from_payload(item)
@@ -73,9 +130,12 @@ def record_links_from_payload(payload: Any) -> None:
     if not isinstance(payload, dict):
         return
 
-    name_link = payload.get("name_link")
-    if name_link:
-        record_name_link(payload.get("name") or payload.get("gig_name"), name_link)
+    plain = payload.get("name_plain") or payload.get("gig_name_plain")
+    linked = payload.get("name") or payload.get("gig_name")
+    if plain and linked and linked != plain:
+        record_name_link(plain, linked)
+
+    _ingest_gig_list_markdown(str(payload.get("gig_list_markdown") or ""))
 
     nested_gig = payload.get("gig")
     if isinstance(nested_gig, dict):
@@ -86,144 +146,127 @@ def record_links_from_payload(payload: Any) -> None:
             record_links_from_payload(item)
 
 
-def _consume_bracket_or_link(text: str, start: int) -> int:
-    """Return end index of a protected ``[...]`` or ``[...](...)`` span."""
-    if start >= len(text) or text[start] != "[":
-        return start + 1
-
-    close = text.find("]", start + 1)
-    if close == -1:
-        return len(text)
-
-    if close + 1 < len(text) and text[close + 1] == "(":
-        depth = 1
-        pos = close + 2
-        while pos < len(text) and depth > 0:
-            ch = text[pos]
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-            pos += 1
-        return pos if depth == 0 else len(text)
-
-    return close + 1
-
-
-def _bare_url_end(text: str, start: int) -> int:
-    if not text.startswith(("http://", "https://"), start):
-        return start
-    end = start
-    while end < len(text) and text[end] not in " \t\n\r])<":
-        end += 1
-    return end
-
-
-def _next_protected_start(text: str, pos: int) -> int:
-    candidates: List[int] = []
-    bracket = text.find("[", pos)
-    if bracket != -1:
-        candidates.append(bracket)
-    angle = text.find("<", pos)
-    if angle != -1:
-        candidates.append(angle)
-    for scheme in ("https://", "http://"):
-        url = text.find(scheme, pos)
-        if url != -1:
-            candidates.append(url)
-    return min(candidates) if candidates else len(text)
+def _resolve_title_to_link(title: str, registry: Dict[str, str]) -> Optional[str]:
+    stripped = title.strip().strip("*")
+    if not stripped or "](http" in stripped:
+        return None
+    link = registry.get(stripped) or registry.get(stripped.casefold())
+    if link:
+        return _link_with_label(link, stripped)
+    query_norm = _normalize(stripped)
+    if query_norm:
+        link = registry.get(query_norm) or registry.get(query_norm.casefold())
+        if link:
+            return _link_with_label(link, stripped)
+    normalized = re.sub(r"\s*-\s*", " ", stripped).strip()
+    for key, value in registry.items():
+        if re.sub(r"\s*-\s*", " ", key).strip().casefold() == normalized.casefold():
+            return _link_with_label(value, stripped)
+    for plain, url in _md_pairs():
+        for alias in name_aliases(plain):
+            if alias.casefold() == stripped.casefold():
+                return f"[{stripped}]({url})"
+            if normalized and re.sub(r"\s*-\s*", " ", alias).strip().casefold() == normalized.casefold():
+                return f"[{stripped}]({url})"
+    if query_norm:
+        best_url: Optional[str] = None
+        best_score = 0.0
+        for plain, url in _md_pairs():
+            score = _score(query_norm, plain)
+            if score > best_score:
+                best_score = score
+                best_url = url
+        if best_url and best_score >= _FUZZY_LINK_FLOOR:
+            return f"[{stripped}]({best_url})"
+    return None
 
 
-def _split_plain_and_protected(text: str) -> List[Tuple[str, bool]]:
-    if not text:
-        return []
+def _link_bullet_titles(text: str, registry: Dict[str, str]) -> str:
+    def _repl(match: re.Match[str]) -> str:
+        title = match.group("title")
+        link = _resolve_title_to_link(title, registry)
+        if not link:
+            return match.group(0)
+        return f"{match.group('indent')}{link}{match.group('sep')}{match.group('body')}"
 
-    segments: List[Tuple[str, bool]] = []
-    pos = 0
-    while pos < len(text):
-        protected_at = _next_protected_start(text, pos)
-        if protected_at > pos:
-            segments.append((text[pos:protected_at], True))
-            pos = protected_at
-            continue
-        if pos >= len(text):
-            break
-
-        if text[pos] == "<":
-            match = _AUTO_LINK_RE.match(text, pos)
-            if match:
-                segments.append((match.group(0), False))
-                pos = match.end()
-                continue
-
-        if text[pos] == "[":
-            end = _consume_bracket_or_link(text, pos)
-            segments.append((text[pos:end], False))
-            pos = end
-            continue
-
-        if text.startswith(("http://", "https://"), pos):
-            end = _bare_url_end(text, pos)
-            segments.append((text[pos:end], False))
-            pos = end
-            continue
-
-        segments.append((text[pos], True))
-        pos += 1
-
-    return segments
+    return _BULLET_TITLE_RE.sub(_repl, text)
 
 
-def apply_name_links_in_text(text: str, links: Dict[str, str]) -> str:
-    """Replace plain gig titles with pre-built name_link markdown."""
-    if not text or not links or not crwd_app_base_url():
-        return text
-
-    pairs = [(name, link) for name, link in links.items() if name and link]
-    if not pairs:
-        return text
-
-    pairs.sort(key=lambda item: len(item[0]), reverse=True)
-
-    def _link_plain_segment(segment: str) -> str:
-        names = [name for name, _ in pairs if name in segment]
-        if not names:
-            return segment
-        link_by_name = {name: link for name, link in pairs}
-        pattern = "|".join(re.escape(name) for name in names)
-
-        def _repl(match: re.Match[str]) -> str:
-            name = match.group(0)
-            start, end = match.start(), match.end()
-            if start > 0 and segment[start - 1] == "[":
-                return name
-            if end < len(segment) and segment[end] == "]":
-                return name
-            link = link_by_name[name]
-            if link in segment:
-                return name
-            return link
-
-        return re.sub(pattern, _repl, segment)
-
-    out: List[str] = []
-    for chunk, is_plain in _split_plain_and_protected(text):
-        if is_plain:
-            out.append(_link_plain_segment(chunk))
+def _comma_segments(line: str) -> List[str]:
+    """Split on commas that are outside parentheses."""
+    parts: List[str] = []
+    current: List[str] = []
+    depth = 0
+    for ch in line:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            segment = "".join(current).strip()
+            if segment:
+                parts.append(segment)
+            current = []
         else:
-            out.append(chunk)
-    return "".join(out)
+            current.append(ch)
+    tail = "".join(current).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _comma_line_linkable_count(line: str, registry: Dict[str, str]) -> int:
+    return sum(1 for part in _comma_segments(line) if _resolve_title_to_link(part, registry))
+
+
+def _is_comma_gig_line(line: str, registry: Dict[str, str]) -> bool:
+    stripped = line.strip()
+    if not stripped or stripped.startswith(("-", "*")):
+        return False
+    if "](http" in stripped:
+        return False
+    if "—" in stripped or "–" in stripped:
+        return False
+    if "," not in stripped:
+        return False
+    parts = _comma_segments(stripped)
+    if len(parts) < 2:
+        return False
+    return _comma_line_linkable_count(stripped, registry) >= 2
+
+
+def _comma_line_to_bullets(line: str, registry: Dict[str, str]) -> str:
+    parts = _comma_segments(line)
+    bullets: List[str] = []
+    for part in parts:
+        link = _resolve_title_to_link(part, registry)
+        bullets.append(f"- {link}" if link else f"- {part}")
+    return "\n".join(bullets)
+
+
+def apply_scoped_gig_links(text: str, registry: Dict[str, str]) -> str:
+    if not text or not crwd_app_base_url():
+        return text
+    if not registry and not _turn_gig_list_markdown.get(""):
+        return text
+    linked = _link_bullet_titles(text, registry)
+    lines = linked.splitlines()
+    out_lines: List[str] = []
+    for line in lines:
+        if _is_comma_gig_line(line, registry):
+            out_lines.append(_comma_line_to_bullets(line, registry))
+        else:
+            out_lines.append(line)
+    return "\n".join(out_lines)
 
 
 def begin_turn_hook(**kwargs: Any) -> None:
-    """``pre_llm_call`` — reset per-turn name_link registry on Chatwoot."""
     if not _is_chatwoot(kwargs.get("platform")):
         return
     reset_turn_registry()
 
 
 def record_tool_links_hook(**kwargs: Any) -> None:
-    """``post_tool_call`` — collect name_link values from ``crwd_db`` results."""
     if not _is_chatwoot(kwargs.get("platform")):
         return
     if str(kwargs.get("tool_name") or "").strip() != "crwd_db":
@@ -236,24 +279,46 @@ def record_tool_links_hook(**kwargs: Any) -> None:
     except json.JSONDecodeError:
         return
     record_links_from_payload(payload)
+    _debug_log(
+        "H1",
+        "gig_links.record_tool_links_hook",
+        "indexed crwd_db payload",
+        {
+            "item_count": len((payload.get("items") or []) if isinstance(payload, dict) else []),
+            "registry_size": len(_registry()),
+            "md_lines": len(_turn_gig_list_markdown.get("").splitlines()),
+        },
+    )
 
 
 def apply_name_links_hook(**kwargs: Any) -> Optional[str]:
-    """``transform_llm_output`` — paste name_link markdown for known gig titles."""
+    """Apply fetch-time gig links when the model paraphrases titles."""
     if not _is_chatwoot(kwargs.get("platform")):
         return None
     if not crwd_app_base_url():
         return None
-
     response_text = str(kwargs.get("response_text") or "")
     if not response_text.strip():
         return None
-
-    links = _registry()
-    if not links:
+    registry = _registry()
+    if not registry and not _turn_gig_list_markdown.get(""):
         return None
-
-    linked = apply_name_links_in_text(response_text, links)
+    linked = apply_scoped_gig_links(response_text, registry)
+    comma_lines = [ln for ln in response_text.splitlines() if _is_comma_gig_line(ln, registry)]
+    comma_linkable = sum(_comma_line_linkable_count(ln, registry) for ln in comma_lines)
+    _debug_log(
+        "H2",
+        "gig_links.apply_name_links_hook",
+        "transform pass",
+        {
+            "registry_size": len(registry),
+            "md_lines": len(_turn_gig_list_markdown.get("").splitlines()),
+            "comma_lines": len(comma_lines),
+            "comma_linkable": comma_linkable,
+            "changed": linked != response_text,
+            "output_links": linked.count("](http"),
+        },
+    )
     if linked == response_text:
         return None
     return linked
