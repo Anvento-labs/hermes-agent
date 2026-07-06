@@ -41,14 +41,14 @@ Find gigs and explain them against the member's **real** data — not in the abs
 2. **A specific gig by name/text:** `get_gig_details` (fuzzy-matches, returns ranked
    candidates with an `_id`). **Confirm the right `_id`** before you quote details or use it
    elsewhere — if two candidates are close, ask which one they mean.
-3. **Waitlisted / pending approval:** `get_waitlisted_gigs` with `user_id` from the
+3. **Pending approval (not in progress yet):** `get_waitlisted_gigs` with `user_id` from the
    `[CRWD member]` context line. Returns gigs they applied for but are not yet accepted
-   (`isAccepted: false`). Use this for "waitlisted", "pending approval", or "still waiting
-   to be approved" — not `get_user_gigs` or `list_active_gigs`.
-4. **Their active gigs:** `get_user_gigs`. The current member's CRWD `user_id` is
+   (`isAccepted: false` — Request Pending Approval). Use this for "pending approval" or
+   "still waiting to be accepted" — not `get_user_gigs` or `list_active_gigs`.
+4. **Their in-progress gigs:** `get_user_gigs`. The current member's CRWD `user_id` is
    provided to you in context (a `[CRWD member]` line) — pass it straight through as `user_id`.
-   This shows campaigns they're an **active/approved** member of (Home → Active), not
-   waitlisted gigs.
+   This shows gigs they're **accepted into** (`isAccepted: true`, Home → Active / IN PROGRESS),
+   not pending-approval applications.
 5. **Turn the gig's name into a hyperlink, every time you name a gig.** Every `crwd_db`
    action above returns the gig's `_id` — build `<crwd.app_base_url>/explore/<_id>`
    (default base `https://live-staging.joincrwd.com`; use the configured
@@ -97,7 +97,7 @@ For the deeper lifecycle detail, load
 - **Do not combine `list_active_gigs` and `get_user_gigs` when answering availability**
   questions — enrolled gigs belong on Home, not Explore. Use step 1 alone for "what's
   available?" and step 4 alone for "what active gigs do I have?"
-- **Waitlisted / pending approval** → step 3 (`get_waitlisted_gigs`) only. Do not use
+- **Pending approval** → step 3 (`get_waitlisted_gigs`) only — `isAccepted: false`. Do not use
   `get_user_gigs` or `list_active_gigs` for those questions.
 - Always pass `user_id` to `list_active_gigs` when the member asks about available or new
   gigs — without it you may show gigs they've already joined.

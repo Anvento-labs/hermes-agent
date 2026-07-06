@@ -460,7 +460,7 @@ def _member_or_filter(user_id: str) -> Dict[str, Any]:
 
 
 def _joined_member_filter(user_id: str) -> Dict[str, Any]:
-    """Active/joined memberships — aligned with app-chatbot get_user_joined_gigs."""
+    """In-progress memberships — admin accepted the member into the gig (``isAccepted``)."""
     return {
         "$and": [
             _member_or_filter(user_id),
@@ -468,7 +468,6 @@ def _joined_member_filter(user_id: str) -> Dict[str, Any]:
             {
                 "$or": [
                     {"isAccepted": True},
-                    {"isApproved": True},
                     {"status": {"$in": ["Active", "Accepted", "Approved", "Joined"]}},
                 ],
             },
@@ -521,7 +520,6 @@ def compute_gig_stage(
     buy_link = _first_buy_link(gig, purchases)
 
     is_accepted = membership.get("isAccepted")
-    is_approved = membership.get("isApproved")
     has_paid = membership.get("hasPaid")
     rejection = membership.get("rejectionReason") or membership.get("rejectionNotes")
 
@@ -532,18 +530,6 @@ def compute_gig_stage(
         "review_submitted": False,
         "review_approved": False,
     }
-
-    if is_accepted is False:
-        return {
-            "stage": "waitlisted",
-            "next_step": (
-                f"You're on the waitlist for {gig_name} — we'll notify you once "
-                "you're accepted."
-            ),
-            "progress": progress,
-            "buy_link": buy_link,
-            "handoff_recommended": False,
-        }
 
     if rejection:
         return {
@@ -557,12 +543,12 @@ def compute_gig_stage(
             "handoff_recommended": True,
         }
 
-    if not is_approved:
+    if is_accepted is False:
         return {
-            "stage": "pending_approval",
+            "stage": "request_pending_approval",
             "next_step": (
-                f"Your application for {gig_name} is pending approval — "
-                "hang tight, we'll notify you when you're in."
+                f"Your application for {gig_name} is pending approval — we'll "
+                "notify you once you're accepted into the gig."
             ),
             "progress": progress,
             "buy_link": buy_link,
@@ -574,7 +560,7 @@ def compute_gig_stage(
         return {
             "stage": "need_purchase",
             "next_step": (
-                f"You're approved for {gig_name} — next, buy the product using "
+                f"You're in {gig_name} — next, buy the product using "
                 f"the gig's link in the app.{link_hint}"
             ),
             "progress": progress,

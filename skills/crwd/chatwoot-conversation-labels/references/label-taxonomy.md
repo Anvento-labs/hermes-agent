@@ -1,60 +1,57 @@
 # Label taxonomy — examples per label
 
-Use these to pick 1–3 labels each turn. Titles are lowercase; pass them exactly
-to `chatwoot_labels` `assign_labels`.
+Use these to pick up to 2 labels each turn. Titles are lowercase; pass them
+exactly to `chatwoot_labels` `assign_labels`.
+
+## handoff-escalation
+
+Applied **only when you call `crwd_handoff`** in that turn — not from member
+text alone. Pair with the topic label when possible.
+
+- You looped in a human after rejected proof → `["gig-active", "handoff-escalation"]`
+- Opt-out processed via handoff → `["account-eligibility", "handoff-escalation"]`
+
+## gig-active
+
+Proof/receipt/submit questions **always** qualify (enrollment not required).
+
+Mid-gig help (deadline, requirements, next step) requires the member to be
+**enrolled** in that gig — otherwise use `gig-discovery`.
+
+- "How do I submit proof?" → `gig-active` (even if not in a gig yet)
+- "What's my deadline?" (enrolled) → `gig-active`
+- "What's my deadline?" (not enrolled) → `gig-discovery`
 
 ## gig-discovery
 
 - "What gigs are near me?"
 - "How do I find gigs in Explore?"
-- "Are there any open gigs this week?"
-- Browsing availability, store locations, gig listings
-
-## gig-execution
-
-- "How do I submit proof?"
-- "Give me details about the Amazon gig?"
-- "Tell me about the Night Before gig"
-- "My submission was rejected" (pair with `handoff-escalation`)
-- "What do I need for this gig?"
-- Active gig work, deadlines, proof requirements, resubmission
+- "What is CRWD?" / "How does CRWD work?"
+- Unenrolled "tell me about the Amazon gig"
+- Generic CRWD hello with no clearer bucket
 
 ## payment-payout
 
 - "Did I get paid?"
 - "When will I be paid?"
 - "Show my payment history"
-- Dot payout status, timing, sent-but-not-received (disputes → add `handoff-escalation`)
+- Dot payout timing; refund/chargeback language
 
-## app-navigation
+## account-eligibility
+
+- Not eligible, wrong state, age requirement
+- Account banned or suspended, membership status
+- Opt-out / stop messaging (until you hand off)
+- Scam/phishing signals (hand off via `crwd_handoff` when appropriate)
+
+## app-help
 
 - "Where is Home vs Explore?"
 - "How do I open a gig?"
-- "Where do I see my active gigs?"
-- UI wayfinding only — not broken behavior (that's `troubleshooting`)
+- Link won't open, page won't load, login error, app crash
+- Pair with `payment-payout` when a payout page is broken
 
-## troubleshooting
+## off-topic
 
-- Link won't open, page won't load, button does nothing
-- App or site appears broken after normal steps
-- Pair with topic label when broken UI blocks the main ask (e.g. payout page +
-  `payment-payout`)
-
-## handoff-escalation
-
-- Frustration, anger, repeated unresolved issue
-- Rejected submission needing human explanation
-- Genuine money dispute, ban, legal question
-- Always **add alongside** the topic label, not alone unless intent is unclear
-
-## account-membership
-
-- Account banned or suspended
-- Membership status, eligibility
-- Account settings the bot cannot change
-
-## general-inquiry
-
-- CRWD questions that don't fit other labels
-- Company/policy questions without a clearer bucket
-- Use sparingly when nothing else fits
+- Jokes, recipes, weather, homework, trivia
+- Fallback when the message has no CRWD anchor words
