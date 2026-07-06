@@ -7,6 +7,11 @@ metadata:
     tags: [crwd, gig, execution, buy, product, ugc, content, proof, receipt, submission]
     related_skills: [crwd-gig-discovery, crwd-payment-status, crwd-reference, crwd-handoff]
     requires_toolsets: [crwd]
+    config:
+      - key: crwd.app_base_url
+        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
+        default: "https://live-staging.joincrwd.com"
+        prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
 
 # CRWD Gig Execution
@@ -30,27 +35,34 @@ skill (proof is just the tail of doing the gig).
 1. **Confirm the gig and its type** (live `irl` vs online) with `crwd_db` `get_gig_details`.
    If it's cleanly neither, go by the gig's real `type_of_work_proof`/requirements rather than
    forcing it into one bucket — and hand off if what's required is unclear.
-2. **Surface the exact product + buy link.** Use `get_user_products` (the member's approved
+2. **Turn the gig's name into a hyperlink.** Build `<crwd.app_base_url>/explore/<_id>` from
+   the `_id` `get_gig_details` (or the injected `[CRWD gig context]`) just returned — default
+   base `https://live-staging.joincrwd.com`, or the configured
+   `skills.config.crwd.app_base_url` value if injected — and make the **gig name itself** the
+   markdown link everywhere it's named, not a separate URL line. Skip it only if this exact
+   gig was already linked earlier in the conversation; every other gig still gets linked. Full
+   detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
+3. **Surface the exact product + buy link.** Use `get_user_products` (the member's approved
    products for their gigs — product name + `product_url`). The current member's CRWD
    `user_id` is provided in context (a `[CRWD member]` line) — pass it straight through;
    `get_user_products` and `get_user_receipts` both take that `user_id`. Give them the real
    link, don't describe it vaguely — include the buy link by default whenever a product is
    involved, not only when they ask "where do I buy?"
-3. **Live gig steps:** go to the store (see `crwd-gig-discovery` if they need to find it),
+4. **Live gig steps:** go to the store (see `crwd-gig-discovery` if they need to find it),
    buy the product, and **call out any special requirement precisely** — e.g. *two purchases
    with two different payment methods* means two separate transactions and two receipts.
    Then create the content: a natural, non-scripted UGC video/photo showing the product
    clearly, matching the gig's "approved concepts."
-4. **Online gig steps:** order the product (commonly Amazon) via the buy link, then leave a
+5. **Online gig steps:** order the product (commonly Amazon) via the buy link, then leave a
    review per the gig's instructions.
-5. **Proof — tell them the exact format** so it isn't rejected:
+6. **Proof — tell them the exact format** so it isn't rejected:
    - Live: receipt photo (readable, showing the product), store location, and the UGC content
      link. Both receipts if there's a two-purchase requirement.
    - Online: order screenshot + review screenshot.
    - Full detail: `skill_view("crwd-reference", "references/proof-requirements.md")`.
-6. **Check submission status** if they ask "did it go through?" — `get_user_receipts` shows
+7. **Check submission status** if they ask "did it go through?" — `get_user_receipts` shows
    receipt/proof validation state (pass/fail + reason).
-7. **If a submission is rejected → hand off** (`crwd-handoff`). Do not guess the rejection
+8. **If a submission is rejected → hand off** (`crwd-handoff`). Do not guess the rejection
    reason or coach a resubmission yourself — that's a human's job.
 
 ## Pitfalls
@@ -60,6 +72,8 @@ skill (proof is just the tail of doing the gig).
 - Don't paraphrase a buy link or requirement — quote the real product URL and the exact
   requirement from the gig data.
 - Rejected submissions always go to a human. Never coach a resubmission.
+- Never post a bare/separate gig URL — the gig name in prose IS the link. Don't withhold the
+  link for any reason other than "already linked this exact gig earlier in this conversation."
 
 ## Verification
 
@@ -67,3 +81,5 @@ skill (proof is just the tail of doing the gig).
 - Any special requirement (e.g. two payment methods) was stated precisely.
 - The member knows the exact proof to submit for their gig type.
 - Rejections were handed off, not self-diagnosed.
+- The gig name was rendered as a hyperlink to `<app_base_url>/explore/<_id>`, unless it was
+  already linked earlier in this conversation.

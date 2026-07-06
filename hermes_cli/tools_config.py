@@ -523,6 +523,15 @@ TOOL_CATEGORIES = {
                     {"key": "CRWD_MONGO_DB", "prompt": "CRWD MongoDB database name", "default": "crwd_staging"},
                 ],
             },
+            {
+                "name": "Dot Payments",
+                "tag": "Member transfers via the Dot API (dot tool)",
+                "env_vars": [
+                    {"key": "DOTS_CLIENT_ID", "prompt": "Dot client id", "url": "https://dashboard.dots.dev/"},
+                    {"key": "DOTS_API_KEY", "prompt": "Dot API key"},
+                    {"key": "DOTS_BASE_URL", "prompt": "Dot API base URL", "default": "https://pls.senddotssandbox.com/api/v2"},
+                ],
+            },
         ],
     },
     "spotify": {

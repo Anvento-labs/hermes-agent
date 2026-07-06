@@ -194,8 +194,9 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
                 for p in (store.get("products") or [])
             ],
         })
+    gig_id = gig.get("_id")
     out = {
-        "_id": gig.get("_id"),
+        "_id": str(gig_id) if gig_id is not None else None,
         "name": gig.get("name"),
         "description": gig.get("description"),
         "gig_type": gig.get("gig_type"),

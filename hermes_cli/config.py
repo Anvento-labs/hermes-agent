@@ -3562,21 +3562,30 @@ OPTIONAL_ENV_VARS = {
         "category": "tool",
         "advanced": True,
     },
-    "DOT_API_KEY": {
-        "description": "Dot payments API key for the dot tool (member payout status + history)",
+    "DOTS_CLIENT_ID": {
+        "description": "Dot payments client id for the dot tool (member transfers); used with DOTS_API_KEY as HTTP Basic auth",
+        "prompt": "Dot client id",
+        "url": None,
+        "tools": ["dot"],
+        "password": False,
+        "category": "tool",
+    },
+    "DOTS_API_KEY": {
+        "description": "Dot payments API key for the dot tool (member transfers); used with DOTS_CLIENT_ID as HTTP Basic auth",
         "prompt": "Dot API key",
         "url": None,
         "tools": ["dot"],
         "password": True,
         "category": "tool",
     },
-    "DOT_API_BASE_URL": {
-        "description": "Dot payments API base URL for the dot tool (e.g. https://api.dot.example.com)",
+    "DOTS_BASE_URL": {
+        "description": "Dot payments API base URL for the dot tool (defaults to the Dot sandbox: https://pls.senddotssandbox.com/api/v2)",
         "prompt": "Dot API base URL",
         "url": None,
         "tools": ["dot"],
         "password": False,
         "category": "tool",
+        "advanced": True,
     },
     "CRWD_ENRICH_ENABLED": {
         "description": "Enable live Chatwoot contact + Honcho peer enrichment from CRWD MongoDB (default: true)",
