@@ -10,14 +10,19 @@ from typing import Any, Dict, List
 
 PREDEFINED_LABELS: List[Dict[str, Any]] = [
     {
-        "title": "gig-discovery",
-        "description": "Finding or browsing gigs",
-        "color": "#1f93ff",
+        "title": "handoff-escalation",
+        "description": "Bot called crwd_handoff — human looped in",
+        "color": "#c0392b",
     },
     {
-        "title": "gig-execution",
-        "description": "Doing a gig, submissions, proof",
+        "title": "gig-active",
+        "description": "Proof submission or enrolled mid-gig work",
         "color": "#47c479",
+    },
+    {
+        "title": "gig-discovery",
+        "description": "Browse gigs, apply, CRWD overview",
+        "color": "#1f93ff",
     },
     {
         "title": "payment-payout",
@@ -25,29 +30,19 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
         "color": "#ffc53d",
     },
     {
-        "title": "app-navigation",
-        "description": "How to use the CRWD app",
-        "color": "#7b68ee",
-    },
-    {
-        "title": "troubleshooting",
-        "description": "Broken links, pages, buttons",
-        "color": "#ff6b6b",
-    },
-    {
-        "title": "handoff-escalation",
-        "description": "Human takeover needed",
-        "color": "#c0392b",
-    },
-    {
-        "title": "account-membership",
-        "description": "Account status, bans, membership",
+        "title": "account-eligibility",
+        "description": "Account status, eligibility, opt-out, scam",
         "color": "#95a5a6",
     },
     {
-        "title": "general-inquiry",
-        "description": "Other questions",
-        "color": "#bdc3c7",
+        "title": "app-help",
+        "description": "App navigation and broken UI",
+        "color": "#7b68ee",
+    },
+    {
+        "title": "off-topic",
+        "description": "Non-CRWD requests",
+        "color": "#aab7b8",
     },
 ]
 

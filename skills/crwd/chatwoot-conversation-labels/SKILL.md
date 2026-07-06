@@ -1,6 +1,6 @@
 ---
 name: chatwoot-conversation-labels
-description: "Use every Chatwoot turn to classify the conversation with one or more support labels via chatwoot_labels."
+description: "Classify Chatwoot threads with support labels each turn."
 version: 1.0.0
 author: Hermes Agent
 license: MIT
@@ -30,54 +30,42 @@ no-ops gracefully there).
 
 | Member intent | Label(s) |
 |---------------|----------|
-| Finding gigs, Explore, availability | `gig-discovery` |
-| Doing/submitting a gig, proof | `gig-execution` |
+| Browse/apply gigs, CRWD overview | `gig-discovery` |
+| Proof or enrolled mid-gig work | `gig-active` |
 | Paid? when? payout history | `payment-payout` |
-| Where in app, Home vs Explore | `app-navigation` |
-| Broken page/link/button | `troubleshooting` |
-| Frustration, dispute, rejection, human needed | `handoff-escalation` (+ topic label) |
-| Ban, account, membership | `account-membership` |
-| None of the above | `general-inquiry` |
+| App navigation or broken UI | `app-help` |
+| Ban, eligibility, opt-out, scam signals | `account-eligibility` |
+| Non-CRWD requests | `off-topic` |
+| You called `crwd_handoff` this turn | `handoff-escalation` (+ topic label) |
 
 More examples: `skill_view("chatwoot-conversation-labels", "references/label-taxonomy.md")`.
 
 ## Procedure (every turn)
 
 Labels are **applied automatically** after each turn via a Chatwoot plugin hook.
-You do not need to call `chatwoot_labels` for normal triage — the hook classifies
-from the member's message and assigns 1–3 labels. Optionally call the tool if you
-want to **override** the auto-classification (e.g. you know the topic better).
+You do not need to call `chatwoot_labels` for normal triage. Optionally call the
+tool to **override** auto-classification.
 
-1. **Bootstrap** (first conversation turn, optional): `chatwoot_labels` with
-   `action=create_labels_if_not_exists` — the auto-hook also bootstraps on assign.
-2. **Classify** mentally from the full thread — the auto-hook uses the same
-   predefined set (see Quick Reference). Override via `assign_labels` when needed.
+1. **Bootstrap** (optional): `chatwoot_labels` `action=create_labels_if_not_exists`.
+2. **Hand off when needed** — `handoff-escalation` is added **only** when you
+   call `crwd_handoff`; frustration keywords alone do not tag handoff.
 3. **Do not mention labels to the member** — internal triage only.
-4. **Done when:** your member-facing reply is sent (labels are applied in the background).
 
 ## Multi-label examples
 
-- Member asks why payout is late **and** the payout page won't load →
-  `["payment-payout", "troubleshooting"]`
-- Member is frustrated about a rejected submission →
-  `["gig-execution", "handoff-escalation"]`
-- Simple "where is Explore?" → `["app-navigation"]`
+- Payout late + page won't load → `["payment-payout", "app-help"]`
+- Rejected proof + you called `crwd_handoff` → `["gig-active", "handoff-escalation"]`
+- Simple "where is Explore?" → `["app-help"]`
 
 ## Common Pitfalls
 
-1. **Mentioning labels to the member** — internal only; never say "I've tagged
-   this as payment-payout."
-2. **Too many labels** — stick to 1–3 that match the *current* turn's intent.
-3. **Skipping every turn** — re-classify each turn so labels stay accurate when
-   topics shift.
-4. **Forgetting bootstrap** — `assign_labels` auto-creates missing predefined
-   labels, but calling `create_labels_if_not_exists` on turn 1 avoids mid-thread
-   422 errors on strict Chatwoot installs.
+1. **Expecting handoff label without calling `crwd_handoff`** — the tag follows
+   the tool, not member frustration text alone.
+2. **Mentioning labels to the member** — internal only.
+3. **Too many labels** — auto-hook caps at 2 per turn.
 
 ## Verification Checklist
 
-- [ ] `create_labels_if_not_exists` called once at conversation start (when on Chatwoot)
-- [ ] 1–3 labels chosen from the predefined set for this turn's intent
-- [ ] `assign_labels` called with the label array before or after the member reply
+- [ ] Member-facing reply sent (labels applied in background)
+- [ ] On handoff, you called `crwd_handoff` (label added automatically)
 - [ ] Member was not told about labels
-- [ ] On handoff, `handoff-escalation` is included with the topic label

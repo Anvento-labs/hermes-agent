@@ -1,6 +1,5 @@
 """Tests for automatic Chatwoot conversation labeling."""
 
-import json
 from unittest.mock import patch
 
 import pytest
@@ -9,12 +8,6 @@ from plugins.platforms.chatwoot import labels_auto as auto
 
 
 class TestClassifyConversationLabels:
-    def test_amazon_gig_details(self):
-        labels = auto.classify_conversation_labels(
-            "give me details about the amazon gig ?"
-        )
-        assert "gig-execution" in labels
-
     def test_find_gigs(self):
         labels = auto.classify_conversation_labels("what gigs are near me?")
         assert "gig-discovery" in labels
@@ -23,20 +16,105 @@ class TestClassifyConversationLabels:
         labels = auto.classify_conversation_labels("did I get paid yet?")
         assert "payment-payout" in labels
 
-    def test_multi_label_payment_and_troubleshooting(self):
+    def test_multi_label_payment_and_app_help(self):
         labels = auto.classify_conversation_labels(
             "my payout page won't load, when will I get paid?"
         )
-        assert "payment-payout" in labels
-        assert "troubleshooting" in labels
+        assert labels == ["payment-payout", "app-help"]
 
-    def test_general_inquiry_fallback(self):
+    def test_off_topic_fallback(self):
         labels = auto.classify_conversation_labels("hello there")
-        assert labels == ["general-inquiry"]
+        assert labels == ["off-topic"]
 
-    def test_handoff(self):
+    def test_no_handoff_from_frustration_keywords(self):
         labels = auto.classify_conversation_labels("I'm so frustrated, get me a human")
-        assert "handoff-escalation" in labels
+        assert "handoff-escalation" not in labels
+
+    def test_handoff_only_when_requested(self):
+        with patch.object(
+            auto,
+            "_member_has_active_gigs",
+            return_value=(True, {"Some Gig"}),
+        ):
+            labels = auto.classify_conversation_labels(
+                "my submission was rejected",
+                handoff_requested=True,
+                contact_id="contact-1",
+            )
+        assert labels == ["gig-active", "handoff-escalation"]
+
+    def test_proof_without_enrollment(self):
+        labels = auto.classify_conversation_labels("how do I submit proof?")
+        assert labels == ["gig-active"]
+
+    def test_mid_gig_unenrolled_falls_back_to_discovery(self):
+        with patch.object(auto, "_member_has_active_gigs", return_value=(False, set())):
+            labels = auto.classify_conversation_labels(
+                "what's my deadline on the amazon gig?",
+                contact_id="contact-1",
+            )
+        assert labels == ["gig-discovery"]
+
+    def test_mid_gig_enrolled(self):
+        with patch.object(
+            auto,
+            "_member_has_active_gigs",
+            return_value=(True, {"Amazon Gig"}),
+        ):
+            labels = auto.classify_conversation_labels(
+                "what's my deadline on the amazon gig?",
+                contact_id="contact-1",
+            )
+        assert labels == ["gig-active"]
+
+    def test_unenrolled_gig_details_is_discovery(self):
+        with patch.object(auto, "_member_has_active_gigs", return_value=(False, set())):
+            labels = auto.classify_conversation_labels(
+                "give me details about the amazon gig ?",
+                contact_id="contact-1",
+            )
+        assert labels == ["gig-discovery"]
+
+    def test_opt_out_topic_without_handoff(self):
+        labels = auto.classify_conversation_labels("stop texting me")
+        assert labels == ["account-eligibility"]
+        assert "handoff-escalation" not in labels
+
+    def test_opt_out_with_handoff(self):
+        labels = auto.classify_conversation_labels(
+            "stop texting me",
+            handoff_requested=True,
+        )
+        assert labels == ["account-eligibility", "handoff-escalation"]
+
+
+class TestHandoffDetection:
+    def test_handoff_tool_hook_sets_flag(self):
+        auto.reset_handoff_flag()
+        auto.handoff_tool_hook(platform="chatwoot", tool_name="crwd_handoff")
+        assert auto.handoff_requested_this_turn() is True
+
+    def test_handoff_tool_hook_ignores_other_tools(self):
+        auto.reset_handoff_flag()
+        auto.handoff_tool_hook(platform="chatwoot", tool_name="crwd_db")
+        assert auto.handoff_requested_this_turn() is False
+
+    def test_handoff_in_history(self):
+        history = [
+            {"role": "user", "content": "help me"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "crwd_handoff", "arguments": "{}"},
+                    }
+                ],
+            },
+        ]
+        assert auto._handoff_in_current_turn(history, "help me") is True
 
 
 class TestAutoLabelConversation:
@@ -54,15 +132,15 @@ class TestAutoLabelConversation:
     def test_applies_labels(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
             auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": ["gig-execution"]},
+            return_value={"success": True, "existing": ["gig-active"]},
         ), patch.object(
             auto, "_assign_labels",
-            return_value={"success": True, "labels": ["gig-execution"], "error": None},
+            return_value={"success": True, "labels": ["gig-active"], "error": None},
         ) as assign:
-            out = auto.auto_label_conversation("give me details about the amazon gig")
+            out = auto.auto_label_conversation("how do I submit proof?")
         assert out["success"] is True
-        assert out["classified"] == ["gig-execution"]
-        assign.assert_called_once_with("1", "42", ["gig-execution"], replace=True)
+        assert out["classified"] == ["gig-active"]
+        assign.assert_called_once_with("1", "42", ["gig-active"], replace=True)
 
 
 class TestAutoLabelHook:
@@ -75,9 +153,26 @@ class TestAutoLabelHook:
         with patch.object(auto, "auto_label_conversation") as fn:
             auto.auto_label_hook(
                 platform="chatwoot",
-                user_message="give me details about the amazon gig",
+                user_message="how do I submit proof?",
             )
         fn.assert_called_once()
+
+    def test_passes_handoff_flag(self):
+        auto.reset_handoff_flag()
+        auto.reset_contact_id()
+        auto._contact_id_this_turn.set("99")
+        auto.handoff_tool_hook(tool_name="crwd_handoff")
+        with patch.object(auto, "auto_label_conversation") as fn:
+            auto.auto_label_hook(
+                platform="chatwoot",
+                user_message="stop texting me",
+            )
+        fn.assert_called_once_with(
+            user_message="stop texting me",
+            conversation_history=None,
+            contact_id="99",
+            handoff_requested=True,
+        )
 
     def test_reminder_hook_chatwoot_only(self, monkeypatch):
         monkeypatch.setenv("CHATWOOT_BASE_URL", "https://chat.example.com")

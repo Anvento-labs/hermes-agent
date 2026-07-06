@@ -1048,4 +1048,5 @@ def register(ctx) -> None:
 
     register_labels_tool(ctx)
     ctx.register_hook("pre_llm_call", labels_auto.labeling_reminder_hook)
+    ctx.register_hook("post_tool_call", labels_auto.handoff_tool_hook)
     ctx.register_hook("post_llm_call", labels_auto.auto_label_hook)
