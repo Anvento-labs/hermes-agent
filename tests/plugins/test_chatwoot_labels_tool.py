@@ -96,7 +96,7 @@ class TestCreateLabelsIfNotExists:
             out = t._create_labels_if_not_exists("1")
 
         assert "gig-discovery" not in out["created"]
-        assert len(out["created"]) == 7  # 8 predefined minus gig-discovery
+        assert len(out["created"]) == 6  # 7 predefined minus gig-discovery
 
     def test_get_failure(self, chatwoot_env):
         with patch.object(t, "_api_request", return_value=(False, None, "HTTP 401")):

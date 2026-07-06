@@ -28,14 +28,15 @@ def _membership(**kwargs):
 
 
 class TestComputeGigStage:
-    def test_waitlisted(self):
+    def test_request_pending_approval(self):
         out = t.compute_gig_stage(
             _membership(isAccepted=False),
             _gig(),
             purchases=[], store_orders=[], product_reviews=[], order_receipt_reviews=[],
         )
-        assert out["stage"] == "waitlisted"
-        assert "waitlist" in out["next_step"].lower()
+        assert out["stage"] == "request_pending_approval"
+        assert "pending approval" in out["next_step"].lower()
+        assert "waitlist" not in out["next_step"].lower()
 
     def test_rejected_handoff(self):
         out = t.compute_gig_stage(
@@ -46,13 +47,13 @@ class TestComputeGigStage:
         assert out["stage"] == "rejected"
         assert out["handoff_recommended"] is True
 
-    def test_pending_approval(self):
+    def test_is_approved_on_membership_ignored(self):
         out = t.compute_gig_stage(
-            _membership(isApproved=False),
+            _membership(isAccepted=True, isApproved=False),
             _gig(),
             purchases=[], store_orders=[], product_reviews=[], order_receipt_reviews=[],
         )
-        assert out["stage"] == "pending_approval"
+        assert out["stage"] == "need_purchase"
 
     def test_need_purchase_includes_buy_link(self):
         gig = _gig(gig_stores=[{"products": [{"product_url": "https://buy.example/p"}]}])
@@ -151,11 +152,15 @@ class TestComputeGigStage:
 
 
 class TestJoinedMemberFilter:
-    def test_includes_is_accepted_or_approved(self):
+    def test_gates_on_is_accepted(self):
         filt = t._joined_member_filter("69a6f191cb29b0b371b3a156")
         assert "$and" in filt
-        or_clause = next(c for c in filt["$and"] if "$or" in c and "isAccepted" in str(c))
-        assert or_clause is not None
+        or_clause = next(
+            c for c in filt["$and"]
+            if "$or" in c and any("isAccepted" in str(item) for item in c["$or"])
+        )
+        assert {"isAccepted": True} in or_clause["$or"]
+        assert not any("isApproved" in str(c) for c in or_clause["$or"])
 
 
 class TestBuildUserGigStatus:
