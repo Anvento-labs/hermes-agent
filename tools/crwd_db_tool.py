@@ -26,6 +26,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from tools.crwd_urls import attach_gig_url
 from tools.lazy_deps import FeatureUnavailable, ensure
 from tools.registry import registry, tool_error
 
@@ -212,7 +213,7 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
             "address": gig.get("address"), "city": gig.get("city"),
             "state": gig.get("state"), "postal_code": gig.get("postal_code"),
         }
-    return _serialize_doc(out)
+    return attach_gig_url(_serialize_doc(out))
 
 
 # --- Actions ---
@@ -334,13 +335,13 @@ def _get_gig_details(query: str, top_n: int = 3) -> str:
 
     items = []
     for s, gig in scored[:top_n]:
-        items.append({
+        items.append(attach_gig_url({
             "score": s,
             "_id": str(gig.get("_id")),
             "name": gig.get("name"),
             "status": gig.get("status"),
             "end_date": _serialize_doc(gig.get("end_date")),
-        })
+        }))
     return json.dumps(
         {"_type": "gig_match_candidates", "query": query, "items": items},
         ensure_ascii=False,
@@ -901,7 +902,7 @@ def build_user_gig_status(
             product_reviews=prog["product_reviews"],
             order_receipt_reviews=prog["order_receipt_reviews"],
         )
-        items.append({
+        items.append(attach_gig_url({
             "gig_id": str(gid),
             "gig_name": gig.get("name"),
             "gig_type": _gig_type_key(gig),
@@ -917,7 +918,7 @@ def build_user_gig_status(
             "next_step": stage_info["next_step"],
             "buy_link": stage_info.get("buy_link"),
             "handoff_recommended": stage_info.get("handoff_recommended", False),
-        })
+        }))
 
     return {
         "_type": "user_gig_status",

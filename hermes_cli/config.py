@@ -3562,6 +3562,15 @@ OPTIONAL_ENV_VARS = {
         "category": "tool",
         "advanced": True,
     },
+    "CRWD_APP_BASE_URL": {
+        "description": "CRWD member web app base URL for gig page links in Chatwoot replies (e.g. https://app.crwd.example.com)",
+        "prompt": "CRWD app base URL",
+        "url": None,
+        "tools": ["crwd_db"],
+        "password": False,
+        "category": "tool",
+        "advanced": True,
+    },
     "DOT_API_KEY": {
         "description": "Dot payments API key for the dot tool (member payout status + history)",
         "prompt": "Dot API key",

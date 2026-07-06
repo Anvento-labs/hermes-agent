@@ -142,11 +142,19 @@ def build_gig_context_block(
     if not items:
         return None
 
+    try:
+        from plugins.platforms.chatwoot import gig_links
+
+        gig_links.record_links_from_payload(items)
+    except Exception:
+        pass
+
     slim = {
         "active_gigs": [
             {
                 "gig_id": row.get("gig_id"),
                 "gig_name": row.get("gig_name"),
+                "name_link": row.get("name_link"),
                 "gig_type": row.get("gig_type"),
                 "stage": row.get("stage"),
                 "next_step": row.get("next_step"),

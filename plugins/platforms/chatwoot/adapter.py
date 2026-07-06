@@ -1036,12 +1036,15 @@ def register(ctx) -> None:
     # Inject the current CRWD member's user_id into each turn so the coach can
     # call crwd_db user lookups directly (no get_user round-trip). Best-effort;
     # no-ops off Chatwoot or when the id can't be resolved.
-    from plugins.platforms.chatwoot import coach_context, gig_context, user_scope
+    from plugins.platforms.chatwoot import coach_context, gig_context, gig_links, user_scope
 
+    ctx.register_hook("pre_llm_call", gig_links.begin_turn_hook)
     ctx.register_hook("pre_llm_call", coach_context.member_context_hook)
     ctx.register_hook("pre_llm_call", gig_context.gig_context_hook)
     ctx.register_middleware("tool_request", user_scope.on_tool_request)
     ctx.register_hook("pre_tool_call", user_scope.on_pre_tool_call)
+    ctx.register_hook("post_tool_call", gig_links.record_tool_links_hook)
+    ctx.register_hook("transform_llm_output", gig_links.apply_name_links_hook)
 
     from plugins.platforms.chatwoot.labels_tool import register_labels_tool
     from plugins.platforms.chatwoot import labels_auto

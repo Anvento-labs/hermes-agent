@@ -30,6 +30,8 @@ skill (proof is just the tail of doing the gig).
 1. **Confirm the gig and its type** (live `irl` vs online) with `crwd_db` `get_gig_details`.
    If it's cleanly neither, go by the gig's real `type_of_work_proof`/requirements rather than
    forcing it into one bucket — and hand off if what's required is unclear.
+   When `name_link` is present, **copy it verbatim** for the gig title — do not paraphrase
+   the name or build your own markdown link.
 2. **Surface the exact product + buy link.** Use `get_user_products` (the member's approved
    products for their gigs — product name + `product_url`). The current member's CRWD
    `user_id` is provided in context (a `[CRWD member]` line) — pass it straight through;
