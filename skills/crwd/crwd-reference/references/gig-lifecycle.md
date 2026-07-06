@@ -35,3 +35,23 @@ either cleanly — a sampling run, a foot-traffic activation, or anything with u
 requirements — don't force it into the wrong bucket. Describe it from its **actual** data
 (payout, `type_of_work_proof`, source, requirements) and, if what's being asked for is
 genuinely unclear, hand off rather than guess (`crwd-handoff`).
+
+## Gig link
+
+Every gig has a page in the CRWD app at:
+
+```text
+<crwd.app_base_url>/explore/<gig _id>
+```
+
+e.g. `https://live-staging.joincrwd.com/explore/6a3411008972fa2d14ce8fe0`. `crwd.app_base_url`
+is a configurable skill setting (default `https://live-staging.joincrwd.com`) — use the
+configured value if one is injected into context, otherwise use that default. The `_id` comes
+straight from whichever `crwd_db` action already returned the gig (`list_active_gigs`,
+`get_gig_details`, `get_waitlisted_gigs`, `get_user_gigs`, `get_user_gig_status`) — never
+fabricate or guess an id.
+
+The gig-facing skills (`crwd-gig-discovery`, `crwd-gig-execution`) turn the **gig's name
+itself** into a markdown hyperlink to this URL every time they mention it — not a separate
+"here's the link" line. See those skills for the exact rule on when to (and when not to)
+re-link the same gig.

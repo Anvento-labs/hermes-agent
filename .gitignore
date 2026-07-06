@@ -144,3 +144,13 @@ apps/desktop/demo/
 # PR body is the archive. See the hermes-agent-dev skill's
 # pr-infographic-workflow reference (storage rule + lapse #8 / #COMMIT-1).
 infographic/
+
+# Local clone of Dot's (Dots.dev) API reference docs, used to check the real
+# Dot endpoint/param names against tools/dot_tool.py's placeholder constants.
+# It's its own git repo (nested .git) and reference material only — never a
+# hermes-agent source file.
+dots-docs-v2/
+
+# Local clone of Chatwoot's docs, used as reference material only — never a
+# hermes-agent source file.
+chatwoot-docs/

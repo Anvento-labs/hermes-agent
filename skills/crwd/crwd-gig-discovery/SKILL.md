@@ -7,6 +7,11 @@ metadata:
     tags: [crwd, gigs, campaigns, browse, apply, approval, payout, deadline, store, walmart, target, location, nearest, hours, stock]
     related_skills: [crwd-gig-execution, crwd-application-expert, crwd-reminders-followups, crwd-reference]
     requires_toolsets: [crwd, web]
+    config:
+      - key: crwd.app_base_url
+        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
+        default: "https://live-staging.joincrwd.com"
+        prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
 
 # CRWD Gig Discovery
@@ -44,13 +49,24 @@ Find gigs and explain them against the member's **real** data — not in the abs
    provided to you in context (a `[CRWD member]` line) — pass it straight through as `user_id`.
    This shows gigs they're **accepted into** (`isAccepted: true`, Home → Active / IN PROGRESS),
    not pending-approval applications.
-5. **Include the product name + buy link by default.** `list_active_gigs` and
+5. **Turn the gig's name into a hyperlink, every time you name a gig.** Every `crwd_db`
+   action above returns the gig's `_id` — build `<crwd.app_base_url>/explore/<_id>`
+   (default base `https://live-staging.joincrwd.com`; use the configured
+   `skills.config.crwd.app_base_url` value if one is injected into context) and make the
+   **gig name itself** the markdown link: `[Summer Skincare Bundle](https://live-staging.joincrwd.com/explore/6a3411008972fa2d14ce8fe0)`.
+   This is proactive — do it the first time a gig is named, don't wait to be asked, and never
+   post the raw URL as a separate "here's the link" line. The **only** reason to skip linking
+   is that this exact gig was already hyperlinked earlier in the same conversation — after
+   that, mention it as plain text, don't re-render the same link every message. Any other
+   gig (or the same gig in a new conversation) still gets linked. Full detail:
+   `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
+6. **Include the product name + buy link by default.** `list_active_gigs` and
    `get_gig_details` already return each store's `products[]` with `name` and `product_url`.
    When you describe a gig, surface those links alongside payout/deadline/store — don't wait
    for the member to ask "where do I buy it?" Links are helpful; give the real `product_url`,
    don't just name the product. (Only skip them if the gig genuinely has no product, or the
    member explicitly says they just want the list.)
-6. **For a live (in-store / `irl`) gig, help them get to the store.** The gig data names the
+7. **For a live (in-store / `irl`) gig, help them get to the store.** The gig data names the
    retailer (`stores[].store_name`) and, for `irl` gigs, an `address`/`city`/`state`/
    `postal_code`. Surface that store info by default when you describe a live gig.
    - **Never assume the member's location.** If you don't already know their city/ZIP (from
@@ -64,13 +80,13 @@ Find gigs and explain them against the member's **real** data — not in the abs
    - Point them at the **retailer the gig actually uses**, not just any big-box store.
    - Suggest they **call ahead to confirm stock** — you cannot see live inventory, so never
      claim something is in stock.
-7. Explain the flow against their **actual** state, not generically: browse → apply →
+8. Explain the flow against their **actual** state, not generically: browse → apply →
    **get approved** → perform → submit proof → get paid. If a `[CRWD gig context]`
    block is present, quote each gig's `next_step` instead of generic lifecycle
    advice. If they're waiting on approval, say that; if approved, point them at
    what to do next (`crwd-gig-execution`).
-8. Be precise on **payout, deadline, and estimated time** — quote the real numbers; never guess.
-9. Offer a deadline reminder if the gig is time-sensitive (see `crwd-reminders-followups`).
+9. Be precise on **payout, deadline, and estimated time** — quote the real numbers; never guess.
+10. Offer a deadline reminder if the gig is time-sensitive (see `crwd-reminders-followups`).
 
 For the deeper lifecycle detail, load
 `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
@@ -97,6 +113,10 @@ For the deeper lifecycle detail, load
   several stores, give the top match and note there are others. Hours online can be stale
   (say "confirm by phone" for "open now?"), and you can't see live inventory (say "call to
   confirm," never "it's in stock"). Keep store replies to name + address + phone + hours.
+- **Gig links:** never post a bare/separate URL and never fabricate a link from memory — the
+  gig name in prose IS the link, built only from a real `_id` `crwd_db` just returned. Don't
+  withhold a link for any reason other than "already linked this exact gig earlier in this
+  conversation" — when in doubt, link it.
 
 ## Verification
 
@@ -110,3 +130,5 @@ For the deeper lifecycle detail, load
 - "Show me more" used `next_offset` from the prior page when more gigs existed.
 - You confirmed the specific gig `_id` when there was any ambiguity.
 - The member knows their current step in the flow and what to do next.
+- Every gig name mentioned is a working markdown link to `<app_base_url>/explore/<_id>`,
+  unless that exact gig was already linked earlier in this conversation.
