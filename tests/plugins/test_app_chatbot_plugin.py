@@ -1,9 +1,8 @@
-"""Tests for the app-chatbot CRWD support plugin."""
+"""Tests for the app-chatbot CLI prefetch plugin."""
 
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 import types
 from pathlib import Path
@@ -38,7 +37,7 @@ def _ensure_plugin_package():
         pkg.__package__ = _PKG_NAME
         sys.modules[_PKG_NAME] = pkg
 
-    load_order = ("_utils", "queries", "handlers", "router", "schemas", "prefetch")
+    load_order = ("_utils", "router", "prefetch")
     for sub in load_order:
         fq = f"{_PKG_NAME}.{sub}"
         if fq in sys.modules:
@@ -57,8 +56,6 @@ def _ensure_plugin_package():
 def _load_module(name: str):
     _ensure_plugin_package()
     fq = f"{_PKG_NAME}.{name}"
-    if fq.endswith(".py"):
-        fq = fq[:-3]
     if name.endswith(".py"):
         name = name[:-3]
     if not fq.startswith("hermes_plugins"):
@@ -90,19 +87,12 @@ def _isolate_env(tmp_path, monkeypatch):
     hermes_home = tmp_path / ".hermes"
     hermes_home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    monkeypatch.setenv("MONGODB_URI", "mongodb://localhost:27017")
-    monkeypatch.setenv("APP_CHATBOT_DEFAULT_USER_ID", "69a6f191cb29b0b371b3a156")
+    monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://localhost:27017")
+    monkeypatch.setenv("CRWD_DEFAULT_USER_ID", "69a6f191cb29b0b371b3a156")
     yield hermes_home
 
 
 class TestUtils:
-    def test_redacts_sensitive_fields(self):
-        utils = _load_module("_utils")
-        doc = {"email": "a@b.com", "password": "secret", "nested": {"emailOTP": "1234"}}
-        redacted = utils.redact_document(doc)
-        assert redacted["password"] == "[REDACTED]"
-        assert redacted["nested"]["emailOTP"] == "[REDACTED]"
-
     def test_parse_object_id_valid(self):
         utils = _load_module("_utils")
         oid = utils.parse_object_id("69a6f191cb29b0b371b3a156")
@@ -113,38 +103,58 @@ class TestUtils:
         with pytest.raises(ValueError):
             utils.parse_object_id("not-an-id")
 
-    def test_default_user_id_from_env(self):
+    def test_default_user_id_prefers_crwd_env(self, monkeypatch):
         utils = _load_module("_utils")
+        monkeypatch.setenv("CRWD_DEFAULT_USER_ID", "aaaaaaaaaaaaaaaaaaaaaaaa")
+        monkeypatch.setenv("APP_CHATBOT_DEFAULT_USER_ID", "bbbbbbbbbbbbbbbbbbbbbbbb")
+        assert utils.default_user_id() == "aaaaaaaaaaaaaaaaaaaaaaaa"
+
+    def test_default_user_id_falls_back_to_legacy_env(self, monkeypatch):
+        utils = _load_module("_utils")
+        monkeypatch.delenv("CRWD_DEFAULT_USER_ID", raising=False)
+        monkeypatch.setenv("APP_CHATBOT_DEFAULT_USER_ID", "69a6f191cb29b0b371b3a156")
         assert utils.default_user_id() == "69a6f191cb29b0b371b3a156"
 
 
 class TestRouter:
     def test_active_gigs_intent(self):
         router = _load_module("router")
-        with patch.object(router.queries, "get_active_gigs", return_value={"success": True, "items": []}) as mock_fn:
+        with patch(
+            "tools.crwd_db_tool.fetch_active_gigs",
+            return_value={"_type": "gig_list", "items": [], "error": None},
+        ) as mock_fn:
             result = router.route_intent("What active gigs can I join?", "69a6f191cb29b0b371b3a156")
-        assert result["tool"] == "get_active_gigs"
+        assert result["action"] == "list_active_gigs"
         mock_fn.assert_called_once()
 
     def test_joined_gigs_intent(self):
         router = _load_module("router")
-        with patch.object(router.queries, "get_user_joined_gigs", return_value={"success": True, "items": []}) as mock_fn:
+        with patch(
+            "tools.crwd_db_tool.fetch_user_joined_gigs",
+            return_value={"_type": "user_gigs", "items": [], "error": None},
+        ) as mock_fn:
             result = router.route_intent("Show my joined gigs", "69a6f191cb29b0b371b3a156")
-        assert result["tool"] == "get_user_joined_gigs"
+        assert result["action"] == "get_user_gigs"
         mock_fn.assert_called_once()
 
     def test_waitlisted_gigs_intent(self):
         router = _load_module("router")
-        with patch.object(router.queries, "get_waitlisted_gigs", return_value={"success": True, "items": []}) as mock_fn:
+        with patch(
+            "tools.crwd_db_tool.fetch_waitlisted_gigs",
+            return_value={"_type": "waitlisted_gigs", "items": [], "error": None},
+        ) as mock_fn:
             result = router.route_intent("What are my waitlisted gigs?", "69a6f191cb29b0b371b3a156")
-        assert result["tool"] == "get_waitlisted_gigs"
+        assert result["action"] == "get_waitlisted_gigs"
         mock_fn.assert_called_once()
 
-    def test_pending_approval_intent(self):
+    def test_history_intent(self):
         router = _load_module("router")
-        with patch.object(router.queries, "get_waitlisted_gigs", return_value={"success": True, "items": []}) as mock_fn:
-            result = router.route_intent("Which gigs are pending approval?", "69a6f191cb29b0b371b3a156")
-        assert result["tool"] == "get_waitlisted_gigs"
+        with patch(
+            "tools.crwd_db_tool.fetch_user_gig_history",
+            return_value={"_type": "user_gig_history", "items": [], "error": None},
+        ) as mock_fn:
+            result = router.route_intent("Show my gig history", "69a6f191cb29b0b371b3a156")
+        assert result["action"] == "get_user_gig_history"
         mock_fn.assert_called_once()
 
     def test_no_match_returns_none(self):
@@ -160,121 +170,29 @@ class TestRouter:
         router = _load_module("router")
         ctx = router.format_router_context("hello", default_user_id="69a6f191cb29b0b371b3a156")
         assert "Current CLI user_id" in ctx
-        assert "APP_CHATBOT_DEFAULT_USER_ID" in ctx
+        assert "CRWD_DEFAULT_USER_ID" in ctx
 
     def test_format_router_context_includes_data_access_policy(self):
         router = _load_module("router")
         ctx = router.format_router_context("hello", default_user_id="69a6f191cb29b0b371b3a156")
         assert "[Data access policy]" in ctx
-        assert "get_active_gigs" in ctx
+        assert "crwd_db" in ctx
         assert "Do not attempt direct MongoDB queries" in ctx
 
 
-class TestQueries:
-    def test_get_active_gigs_excludes_enrolled(self, monkeypatch):
-        queries = _load_module("queries")
-        mock_db = MagicMock()
-        mock_crwds = MagicMock()
-        mock_members = MagicMock()
-        mock_db.added_crwd_members = mock_members
-        mock_db.crwds = mock_crwds
-        mock_members.find.return_value = [{"crwd_id": queries.parse_object_id("69e6a4d6cea992cbda22b381")}]
-        mock_crwds.count_documents.return_value = 1
-        mock_crwds.find.return_value.sort.return_value.skip.return_value.limit.return_value = [
-            {"_id": queries.parse_object_id("69b8614f1083b9302fd0a9a7"), "name": "Test Gig", "status": "Active"},
-        ]
-        monkeypatch.setattr(queries, "get_mongo_db", lambda: mock_db)
-
-        result = queries.get_active_gigs("69a6f191cb29b0b371b3a156")
-        assert result["success"] is True
-        assert len(result["items"]) == 1
-        assert result["items"][0]["name"] == "Test Gig"
-        query_used = mock_crwds.find.call_args[0][0]
-        assert query_used["status"] == "Active"
-        assert "$nin" in query_used["_id"]
-
-    def test_get_user_profile_not_found(self, monkeypatch):
-        queries = _load_module("queries")
-        mock_db = MagicMock()
-        mock_db.users.find_one.return_value = None
-        monkeypatch.setattr(queries, "get_mongo_db", lambda: mock_db)
-        result = queries.get_user_profile_by_id("69a6f191cb29b0b371b3a156")
-        assert result["success"] is False
-
-    def test_get_waitlisted_gigs_filters_is_accepted_false(self, monkeypatch):
-        queries = _load_module("queries")
-        mock_db = MagicMock()
-        mock_members = MagicMock()
-        mock_crwds = MagicMock()
-        mock_db.added_crwd_members = mock_members
-        mock_db.crwds = mock_crwds
-        gig_oid = queries.parse_object_id("69e6a4d6cea992cbda22b381")
-        member_cursor = MagicMock()
-        mock_members.find.return_value = member_cursor
-        member_cursor.sort.return_value = member_cursor
-        member_cursor.limit.return_value = [
-            {"crwd_id": gig_oid, "isAccepted": False, "status": "Pending"},
-        ]
-        mock_crwds.find_one.return_value = {
-            "_id": gig_oid,
-            "name": "Pending Gig",
-            "status": "Active",
-        }
-        monkeypatch.setattr(queries, "get_mongo_db", lambda: mock_db)
-
-        result = queries.get_waitlisted_gigs("69a6f191cb29b0b371b3a156")
-        assert result["success"] is True
-        assert len(result["items"]) == 1
-        assert result["items"][0]["membership"]["isAccepted"] is False
-        assert result["items"][0]["gig"]["name"] == "Pending Gig"
-        member_filter = mock_members.find.call_args[0][0]
-        assert member_filter["isAccepted"] is False
-
-
-class TestHandlers:
-    def test_get_active_gigs_handler(self, monkeypatch):
-        handlers = _load_module("handlers")
-        with patch.object(handlers.queries, "get_active_gigs", return_value={"success": True, "items": [{"name": "Gig A"}]}):
-            raw = handlers.get_active_gigs({})
-        data = json.loads(raw)
-        assert data["success"] is True
-        assert data["items"][0]["name"] == "Gig A"
-
-    def test_get_gig_details_requires_ref(self):
-        handlers = _load_module("handlers")
-        raw = handlers.get_gig_details({})
-        data = json.loads(raw)
-        assert data["success"] is False
-
-    def test_get_waitlisted_gigs_handler(self, monkeypatch):
-        handlers = _load_module("handlers")
-        with patch.object(
-            handlers.queries,
-            "get_waitlisted_gigs",
-            return_value={"success": True, "items": [{"membership": {"isAccepted": False}}]},
-        ):
-            raw = handlers.get_waitlisted_gigs({})
-        data = json.loads(raw)
-        assert data["success"] is True
-        assert data["items"][0]["membership"]["isAccepted"] is False
-
-
 class TestPluginRegistration:
-    def test_register_wires_hook_and_tools(self):
+    def test_register_wires_hook_only(self):
         plugin = _load_plugin_init()
         ctx = MagicMock()
         plugin.register(ctx)
         ctx.register_hook.assert_called_once_with("pre_llm_call", plugin._prefetch_context)
-        assert ctx.register_tool.call_count == 6
-        tool_names = [call.kwargs["name"] for call in ctx.register_tool.call_args_list]
-        assert tool_names == [
-            "get_active_gigs",
-            "get_user_profile_by_id",
-            "get_gig_details",
-            "get_user_gig_history",
-            "get_user_joined_gigs",
-            "get_waitlisted_gigs",
-        ]
+        ctx.register_tool.assert_not_called()
+
+    def test_prefetch_context_returns_none_without_crwd_uri(self, monkeypatch):
+        plugin = _load_plugin_init()
+        monkeypatch.delenv("CRWD_MONGO_URI", raising=False)
+        monkeypatch.delenv("MONGODB_URI", raising=False)
+        assert plugin._prefetch_context(user_message="active gigs") is None
 
     def test_prefetch_context_returns_dict_when_routed(self, monkeypatch):
         plugin = _load_plugin_init()

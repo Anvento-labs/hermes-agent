@@ -9,6 +9,7 @@ one guarded custom-query escape hatch:
 - ``get_gig_details``  -- fuzzy-match gigs by name / free text, ranked candidates
 - ``get_user``         -- look up one user by email, phone, or _id
 - ``get_user_gigs``    -- campaigns a user is an active member of
+- ``get_user_gig_history`` -- past membership rows for a member
 - ``get_user_gig_status`` -- per-gig stage + personalized next_step from progress data
 - ``custom_query``     -- guarded find/count on the three known collections
 
@@ -43,6 +44,8 @@ _COLL_NOTIFS = "notifications"
 _COLL_GIG_STORE_ORDERS = "gig_store_orders"
 _COLL_GIG_PRODUCT_REVIEWS = "gig_product_reviews"
 _COLL_ORDER_RECEIPT_REVIEWS = "order_receipt_reviews"
+_COLL_GIG_PARTICIPATIONS = "gig_participations"
+_OBJECT_ID_IN_TEXT_RE = re.compile(r"\b[0-9a-fA-F]{24}\b")
 _ALLOWED_COLLECTIONS = {
     _COLL_CRWDS, _COLL_USERS, _COLL_MEMBERS,
     _COLL_PURCHASES, _COLL_RECEIPTS, _COLL_NOTIFS,
@@ -100,13 +103,51 @@ _NOISE_WORDS = {
 }
 
 _client = None
+_uri_bridge_warned = False
 
 
 # --- Availability / connection ---
 
+def _bridge_legacy_mongo_uri() -> None:
+    """Copy deprecated MONGODB_URI into CRWD_MONGO_URI when the latter is unset."""
+    global _uri_bridge_warned
+    if os.getenv("CRWD_MONGO_URI"):
+        return
+    legacy = (os.getenv("MONGODB_URI") or "").strip()
+    if not legacy:
+        return
+    os.environ["CRWD_MONGO_URI"] = legacy
+    if not _uri_bridge_warned:
+        logger.warning(
+            "MONGODB_URI is deprecated for CRWD access; set CRWD_MONGO_URI instead"
+        )
+        _uri_bridge_warned = True
+
+
+def _resolve_mongo_uri() -> str:
+    _bridge_legacy_mongo_uri()
+    return (os.getenv("CRWD_MONGO_URI") or "").strip()
+
+
+def _resolve_db_name() -> str:
+    env_name = (os.getenv("CRWD_MONGO_DB") or "").strip()
+    if env_name:
+        return env_name
+    try:
+        from hermes_cli.config import cfg_get, load_config
+
+        cfg = load_config()
+        db_name = str(cfg_get(cfg, "mongodb", "default_database", default="") or "").strip()
+        if db_name:
+            return db_name
+    except Exception:
+        pass
+    return _DB_DEFAULT
+
+
 def check_crwd_db_requirements() -> bool:
-    """Tool is only available when CRWD_MONGO_URI is set."""
-    return bool(os.getenv("CRWD_MONGO_URI"))
+    """Tool is only available when CRWD_MONGO_URI (or legacy MONGODB_URI) is set."""
+    return bool(_resolve_mongo_uri())
 
 
 def _get_client():
@@ -117,7 +158,7 @@ def _get_client():
         raise RuntimeError(str(exc)) from exc
     from pymongo import MongoClient
 
-    uri = os.getenv("CRWD_MONGO_URI", "")
+    uri = _resolve_mongo_uri()
     if not uri:
         raise RuntimeError("CRWD_MONGO_URI is not set")
     if _client is None:
@@ -126,8 +167,7 @@ def _get_client():
 
 
 def _db():
-    db_name = os.getenv("CRWD_MONGO_DB", _DB_DEFAULT).strip() or _DB_DEFAULT
-    return _get_client()[db_name]
+    return _get_client()[_resolve_db_name()]
 
 
 def _oid(value: Any):
@@ -216,6 +256,66 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
     return _serialize_doc(out)
 
 
+def _full_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
+    """Coach-facing gig payload with full store/terms/targeting detail."""
+    out = _slim_gig(gig)
+    out["terms_description"] = gig.get("terms_description")
+    out["gig_stores"] = _serialize_doc(gig.get("gig_stores") or [])
+    out["targeting_rules"] = _serialize_doc(gig.get("targeting_rules") or [])
+    out["locations"] = _serialize_doc(gig.get("locations") or [])
+    return out
+
+
+def _find_gig_by_ref(gig_ref: str) -> Optional[Dict[str, Any]]:
+    """Resolve one gig by _id or name; prefers open gigs, falls back to any non-deleted."""
+    ref = (gig_ref or "").strip()
+    if not ref:
+        return None
+
+    coll = _db()[_COLL_CRWDS]
+    oid_match = _OBJECT_ID_IN_TEXT_RE.search(ref)
+    if oid_match:
+        oid = _oid(oid_match.group(0))
+        if oid is not None:
+            doc = coll.find_one({"_id": oid, "isDeleted": {"$ne": True}}, _GIG_FIELDS, max_time_ms=_MAX_TIME_MS)
+            if doc:
+                return doc
+
+    active_filter = _open_gig_filter()
+    exact = coll.find_one(
+        {**active_filter, "name": {"$regex": f"^{re.escape(ref)}$", "$options": "i"}},
+        _GIG_FIELDS,
+        max_time_ms=_MAX_TIME_MS,
+    )
+    if exact:
+        return exact
+
+    fuzzy = coll.find_one(
+        {**active_filter, "name": {"$regex": re.escape(ref), "$options": "i"}},
+        _GIG_FIELDS,
+        max_time_ms=_MAX_TIME_MS,
+    )
+    if fuzzy:
+        return fuzzy
+
+    words = [w for w in re.split(r"\W+", ref) if len(w) >= 3]
+    if len(words) >= 2:
+        pattern = ".*".join(re.escape(word) for word in words)
+        token_match = coll.find_one(
+            {**active_filter, "name": {"$regex": pattern, "$options": "i"}},
+            _GIG_FIELDS,
+            max_time_ms=_MAX_TIME_MS,
+        )
+        if token_match:
+            return token_match
+
+    return coll.find_one(
+        {"isDeleted": {"$ne": True}, "name": {"$regex": re.escape(ref), "$options": "i"}},
+        _GIG_FIELDS,
+        max_time_ms=_MAX_TIME_MS,
+    )
+
+
 # --- Actions ---
 
 def _get_enrolled_gig_ids(user_id: str) -> set[str]:
@@ -302,18 +402,38 @@ def _score(query_norm: str, name: str, description: str = "") -> float:
     return round(min(score, 1.0), 4)
 
 
-def _get_gig_details(query: str, top_n: int = 3) -> str:
+def _get_gig_details(query: str, top_n: int = 3, full: bool = False) -> str:
     query = (query or "").strip()
     top_n = max(1, min(int(top_n or 3), _GIG_TOPN_CAP))
     if not query:
         return tool_error("query is required for get_gig_details")
+
+    if full or top_n == 1:
+        doc = _find_gig_by_ref(query)
+        if doc:
+            item = _full_gig(doc)
+            item["score"] = 1.0
+            return json.dumps(
+                {"_type": "gig_match_candidates", "query": query, "items": [item], "full": True},
+                ensure_ascii=False,
+            )
+        if full:
+            return json.dumps(
+                {
+                    "_type": "gig_match_candidates",
+                    "query": query,
+                    "items": [],
+                    "error": f"Gig not found: {query}",
+                },
+                ensure_ascii=False,
+            )
 
     # Exact _id short-circuit.
     oid = _oid(query)
     if oid is not None:
         gig = _db()[_COLL_CRWDS].find_one({"_id": oid}, _GIG_FIELDS, max_time_ms=_MAX_TIME_MS)
         if gig:
-            item = _slim_gig(gig)
+            item = _full_gig(gig) if top_n == 1 else _slim_gig(gig)
             item["score"] = 1.0
             return json.dumps(
                 {"_type": "gig_match_candidates", "query": query, "items": [item]},
@@ -335,13 +455,16 @@ def _get_gig_details(query: str, top_n: int = 3) -> str:
 
     items = []
     for s, gig in scored[:top_n]:
-        items.append({
-            "score": s,
-            "_id": str(gig.get("_id")),
-            "name": gig.get("name"),
-            "status": gig.get("status"),
-            "end_date": _serialize_doc(gig.get("end_date")),
-        })
+        if top_n == 1 and s >= 0.9:
+            items.append({**_full_gig(gig), "score": s})
+        else:
+            items.append({
+                "score": s,
+                "_id": str(gig.get("_id")),
+                "name": gig.get("name"),
+                "status": gig.get("status"),
+                "end_date": _serialize_doc(gig.get("end_date")),
+            })
     return json.dumps(
         {"_type": "gig_match_candidates", "query": query, "items": items},
         ensure_ascii=False,
@@ -438,6 +561,62 @@ def _get_user_gigs(user_id: str, limit: int = 10) -> str:
         })
     return json.dumps(
         {"_type": "user_gigs", "items": items, "error": None}, ensure_ascii=False
+    )
+
+
+def _get_user_gig_history(user_id: str, limit: int = 50) -> str:
+    """Past membership rows for a member (includes deleted/rejected rows)."""
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return tool_error("user_id is required for get_user_gig_history")
+    row_limit = max(1, min(int(limit or 50), _HARD_LIMIT))
+
+    db = _db()
+    rows = list(
+        db[_COLL_MEMBERS]
+        .find(_member_or_filter(user_id), _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
+        .sort("createdAt", -1)
+        .limit(row_limit)
+    )
+    items = []
+    for row in rows:
+        serialized = _serialize_doc(row)
+        items.append({
+            "_id": serialized.get("_id"),
+            "crwd_id": serialized.get("crwd_id"),
+            "status": serialized.get("status"),
+            "isApproved": serialized.get("isApproved"),
+            "isAccepted": serialized.get("isAccepted"),
+            "isDeleted": serialized.get("isDeleted"),
+            "hasPaid": serialized.get("hasPaid"),
+            "rejectionReason": serialized.get("rejectionReason"),
+            "rejectionNotes": serialized.get("rejectionNotes"),
+            "date": serialized.get("date"),
+            "time": serialized.get("time"),
+            "createdAt": serialized.get("createdAt"),
+            "updatedAt": serialized.get("updatedAt"),
+        })
+
+    if not items:
+        try:
+            if _COLL_GIG_PARTICIPATIONS in db.list_collection_names():
+                fallback = list(
+                    db[_COLL_GIG_PARTICIPATIONS]
+                    .find(
+                        {"user_id": {"$in": _id_values(user_id)}},
+                        max_time_ms=_MAX_TIME_MS,
+                    )
+                    .sort("createdAt", -1)
+                    .limit(row_limit)
+                )
+                if fallback:
+                    items = _serialize_docs(fallback)
+        except Exception:
+            logger.debug("gig_participations fallback unavailable", exc_info=True)
+
+    return json.dumps(
+        {"_type": "user_gig_history", "items": items, "count": len(items), "error": None},
+        ensure_ascii=False,
     )
 
 
@@ -1083,6 +1262,89 @@ def _custom_query(
     )
 
 
+# --- Prefetch helpers (used by app-chatbot CLI router and other hooks) ---
+
+def _parse_tool_payload(raw: str) -> Dict[str, Any]:
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"error": "invalid tool response"}
+    if isinstance(payload, dict) and payload.get("error"):
+        return {"success": False, "error": payload["error"]}
+    return payload
+
+
+def fetch_active_gigs(user_id: str, *, limit: int = 10, offset: int = 0) -> Dict[str, Any]:
+    """Return list_active_gigs payload as a dict."""
+    if not check_crwd_db_requirements():
+        return {"success": False, "error": "CRWD_MONGO_URI is not configured"}
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return {"success": False, "error": "user_id is required", "items": []}
+    return _parse_tool_payload(_list_active_gigs(limit=limit, user_id=user_id, offset=offset))
+
+
+def fetch_user_joined_gigs(user_id: str, limit: int = 10) -> Dict[str, Any]:
+    if not check_crwd_db_requirements():
+        return {"success": False, "error": "CRWD_MONGO_URI is not configured"}
+    return _parse_tool_payload(_get_user_gigs(user_id=user_id, limit=limit))
+
+
+def fetch_waitlisted_gigs(user_id: str, limit: int = 10) -> Dict[str, Any]:
+    if not check_crwd_db_requirements():
+        return {"success": False, "error": "CRWD_MONGO_URI is not configured"}
+    return _parse_tool_payload(_get_waitlisted_gigs(user_id=user_id, limit=limit))
+
+
+def fetch_user_gig_history(user_id: str, limit: int = 50) -> Dict[str, Any]:
+    if not check_crwd_db_requirements():
+        return {"success": False, "error": "CRWD_MONGO_URI is not configured"}
+    return _parse_tool_payload(_get_user_gig_history(user_id=user_id, limit=limit))
+
+
+def fetch_user_profile(user_id: str) -> Dict[str, Any]:
+    if not check_crwd_db_requirements():
+        return {"success": False, "error": "CRWD_MONGO_URI is not configured"}
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return {"success": False, "error": "user_id is required"}
+    payload = _parse_tool_payload(_get_user(identifier=user_id))
+    items = payload.get("items") or []
+    if not items:
+        return {"success": False, "error": f"User not found: {user_id}"}
+    user = items[0]
+    return {
+        "success": True,
+        "user": {
+            "_id": user.get("_id", {}).get("$oid") if isinstance(user.get("_id"), dict) else str(user.get("_id", "")),
+            "email": user.get("email"),
+            "first_name": user.get("first_name"),
+            "last_name": user.get("last_name"),
+            "full_name": user.get("full_name"),
+            "phone": user.get("phone"),
+            "status": user.get("status"),
+            "bio": user.get("bio"),
+            "city": user.get("city"),
+            "state": user.get("state"),
+            "country": user.get("country"),
+        },
+    }
+
+
+def fetch_gig_details(query: str, *, full: bool = True) -> Dict[str, Any]:
+    if not check_crwd_db_requirements():
+        return {"success": False, "error": "CRWD_MONGO_URI is not configured"}
+    query = (query or "").strip()
+    if not query:
+        return {"success": False, "error": "Provide gig_id or name"}
+    payload = _parse_tool_payload(_get_gig_details(query=query, top_n=1, full=full))
+    items = payload.get("items") or []
+    if not items:
+        err = payload.get("error") or f"Gig not found: {query}"
+        return {"success": False, "error": err}
+    return {"success": True, "gig": items[0]}
+
+
 # --- Router ---
 
 def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
@@ -1098,11 +1360,19 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 offset=args.get("offset", 0),
             )
         if action == "get_gig_details":
-            return _get_gig_details(query=args.get("query", ""), top_n=args.get("top_n", 3))
+            return _get_gig_details(
+                query=args.get("query", ""),
+                top_n=args.get("top_n", 3),
+                full=bool(args.get("full")),
+            )
         if action == "get_user":
             return _get_user(identifier=args.get("identifier", ""))
         if action == "get_user_gigs":
             return _get_user_gigs(user_id=args.get("user_id", ""), limit=args.get("limit", 10))
+        if action == "get_user_gig_history":
+            return _get_user_gig_history(
+                user_id=args.get("user_id", ""), limit=args.get("limit", 50)
+            )
         if action == "get_waitlisted_gigs":
             return _get_waitlisted_gigs(
                 user_id=args.get("user_id", ""), limit=args.get("limit", 10)
@@ -1132,7 +1402,7 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
             )
         return tool_error(
             "Unknown action. Use: list_active_gigs, get_gig_details, get_user, "
-            "get_user_gigs, get_waitlisted_gigs, get_user_gig_status, "
+            "get_user_gigs, get_user_gig_history, get_waitlisted_gigs, get_user_gig_status, "
             "get_user_products, get_user_receipts, get_user_notifications, custom_query"
         )
     except RuntimeError as exc:
@@ -1152,14 +1422,15 @@ CRWD_DB_SCHEMA = {
         "membership, a member's approved products (buy links), their receipt/"
         "proof upload status, and their account notifications. Read-only. Use "
         "the specific action if it fits (list_active_gigs, get_gig_details, "
-        "get_user, get_user_gigs, get_waitlisted_gigs, get_user_gig_status, "
+        "get_user, get_user_gigs, get_user_gig_history, get_waitlisted_gigs, get_user_gig_status, "
         "get_user_products, "
         "get_user_receipts, get_user_notifications); use custom_query only when none of the "
         "others answer the question. list_active_gigs accepts user_id to "
         "exclude gigs the member already has a membership for, and offset for "
         "pagination; it returns has_more and next_offset for the next page. "
         "get_gig_details fuzzy-matches gig names and returns ranked candidates "
-        "-- pick the _id you mean before using it elsewhere. "
+        "(set full=true or top_n=1 for the full gig payload). "
+        "get_user_gig_history returns past membership rows including rejected/completed gigs. "
         "get_waitlisted_gigs returns gigs the member applied for but is not "
         "yet accepted into (isAccepted false / pending approval). "
         "get_user_gig_status returns per-gig stage and personalized next_step "
@@ -1172,7 +1443,8 @@ CRWD_DB_SCHEMA = {
                 "type": "string",
                 "enum": [
                     "list_active_gigs", "get_gig_details", "get_user",
-                    "get_user_gigs", "get_waitlisted_gigs", "get_user_gig_status",
+                    "get_user_gigs", "get_user_gig_history", "get_waitlisted_gigs",
+                    "get_user_gig_status",
                     "get_user_products",
                     "get_user_receipts", "get_user_notifications", "custom_query",
                 ],
@@ -1191,7 +1463,7 @@ CRWD_DB_SCHEMA = {
                 "description": (
                     "users._id. For list_active_gigs: exclude gigs the member "
                     "already has a membership for. Also used by get_user_gigs, "
-                    "get_waitlisted_gigs, get_user_products, get_user_receipts, "
+                    "get_user_gig_history, get_waitlisted_gigs, get_user_products, get_user_receipts, "
                     "get_user_notifications, get_user_gig_status."
                 ),
             },
@@ -1209,6 +1481,10 @@ CRWD_DB_SCHEMA = {
             },
             "query": {"type": "string", "description": "gig _id, name, or free text to fuzzy-match (get_gig_details)"},
             "top_n": {"type": "integer", "description": "max candidates to return, default 3, max 10 (get_gig_details)"},
+            "full": {
+                "type": "boolean",
+                "description": "Return full gig payload for get_gig_details (terms, stores, targeting)",
+            },
             "collection": {"type": "string", "enum": [
                 "crwds", "users", "added_crwd_members",
                 "user_product_purchases", "receipt_upload_history", "notifications",

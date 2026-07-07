@@ -10779,11 +10779,16 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 persist_user_timestamp=persist_user_timestamp,
             )
 
-            # Stop persistent typing indicator now that the agent is done
+            # Stop persistent typing indicator now that the agent is done.
+            # Pause the refresh loop first so _keep_typing cannot re-send
+            # typing_status:on before response delivery finishes.
             try:
                 _typing_adapter = self.adapters.get(source.platform)
-                if _typing_adapter and hasattr(_typing_adapter, "stop_typing"):
-                    await _typing_adapter.stop_typing(source.chat_id)
+                if _typing_adapter:
+                    if hasattr(_typing_adapter, "pause_typing_for_chat"):
+                        _typing_adapter.pause_typing_for_chat(source.chat_id)
+                    if hasattr(_typing_adapter, "stop_typing"):
+                        await _typing_adapter.stop_typing(source.chat_id)
             except Exception:
                 pass
 
@@ -11304,8 +11309,11 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
             # Stop typing indicator on error too
             try:
                 _err_adapter = self.adapters.get(source.platform)
-                if _err_adapter and hasattr(_err_adapter, "stop_typing"):
-                    await _err_adapter.stop_typing(source.chat_id)
+                if _err_adapter:
+                    if hasattr(_err_adapter, "pause_typing_for_chat"):
+                        _err_adapter.pause_typing_for_chat(source.chat_id)
+                    if hasattr(_err_adapter, "stop_typing"):
+                        await _err_adapter.stop_typing(source.chat_id)
             except Exception:
                 pass
             logger.exception("Agent error in session %s", session_key)
@@ -17109,9 +17117,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 # Pause typing — like approval, we don't want a "thinking..."
                 # status to obscure the prompt or block the user from typing
                 # an "Other" response on platforms that disable input while
-                # typing is active (Slack Assistant API).
+                # typing is active (Slack Assistant API, Chatwoot widget).
                 try:
                     _status_adapter.pause_typing_for_chat(_status_chat_id)
+                    safe_schedule_threadsafe(
+                        _status_adapter.stop_typing(_status_chat_id),
+                        _loop_for_step,
+                        logger=logger,
+                        log_message="stop_typing during clarify failed to schedule",
+                    )
                 except Exception:
                     pass
 
@@ -17235,7 +17249,14 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 # is active.  The approval message send auto-clears the Slack
                 # status; pausing prevents _keep_typing from re-setting it.
                 # Typing resumes in _handle_approve_command/_handle_deny_command.
+                # Chatwoot also locks the widget composer while typing is on.
                 _status_adapter.pause_typing_for_chat(_status_chat_id)
+                safe_schedule_threadsafe(
+                    _status_adapter.stop_typing(_status_chat_id),
+                    _loop_for_step,
+                    logger=logger,
+                    log_message="stop_typing during approval failed to schedule",
+                )
 
                 cmd = approval_data.get("command", "")
                 desc = approval_data.get("description", "dangerous command")

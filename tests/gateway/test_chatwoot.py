@@ -268,10 +268,12 @@ class TestSend:
     async def test_long_message_chunks(self):
         a = _make_adapter()
         a.MAX_MESSAGE_LENGTH = 10
-        a._session = _FakeSession([_FakeResp(200, {"id": i}) for i in range(3)])
+        a._session = _FakeSession(
+            [_FakeResp(200, {"id": i}) for i in range(3)] + [_FakeResp(200)]
+        )
         res = await a.send("1:42", "x" * 25)  # 10 + 10 + 5 → 3 chunks
         assert res.success
-        assert len(a._session.calls) == 3
+        assert len(a._session.calls) == 4  # 3 chunks + typing-off
 
     @pytest.mark.asyncio
     async def test_5xx_retryable(self):
@@ -364,6 +366,24 @@ class TestTypingIndicator:
         _, url, kwargs = a._session.calls[0]
         assert url.endswith("/toggle_typing_status")
         assert kwargs["json"]["typing_status"] == "off"
+
+    @pytest.mark.asyncio
+    async def test_customer_send_clears_typing(self):
+        a = _make_adapter(agent_token="agent-tok")
+        a._session = _FakeSession([_FakeResp(200, {"id": 1}), _FakeResp(200)])
+        await a.send("1:42", "hello")
+        assert len(a._session.calls) == 2
+        _, typing_url, typing_kwargs = a._session.calls[1]
+        assert typing_url.endswith("/toggle_typing_status")
+        assert typing_kwargs["json"]["typing_status"] == "off"
+
+    @pytest.mark.asyncio
+    async def test_private_note_send_does_not_clear_typing(self):
+        a = _make_adapter(private_note_trace=True, agent_token="agent-tok")
+        a._session = _FakeSession([_FakeResp(200, {"id": 1})])
+        await a.send("1:42", "trace", metadata={"non_conversational": True})
+        assert len(a._session.calls) == 1
+        assert "toggle_typing_status" not in a._session.calls[0][1]
 
 
 # ── webhook handler ──────────────────────────────────────────────────────────

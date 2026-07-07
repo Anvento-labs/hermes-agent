@@ -7,8 +7,9 @@ import logging
 import re
 from typing import Any, Dict, Optional
 
+from tools import crwd_db_tool as crwd
+
 from ._utils import parse_object_id
-from . import queries
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def _extract_gig_name(message: str) -> Optional[str]:
 def route_intent(user_message: str, default_user_id: str) -> Optional[Dict[str, Any]]:
     """Return query result dict for a high-confidence intent, else None."""
     message = (user_message or "").strip()
-    if not message:
+    if not message or not crwd.check_crwd_db_requirements():
         return None
 
     user_id = default_user_id or _extract_object_id(message) or ""
@@ -101,41 +102,51 @@ def route_intent(user_message: str, default_user_id: str) -> Optional[Dict[str, 
 
         if _matches(message, _ACTIVE_GIGS_PATTERNS):
             if user_id:
-                return {"tool": "get_active_gigs", "result": queries.get_active_gigs(user_id)}
+                result = crwd.fetch_active_gigs(user_id)
+                if result.get("error") is None and "items" in result:
+                    return {"action": "list_active_gigs", "result": result}
 
         if _matches(message, _JOINED_GIGS_PATTERNS):
             if user_id:
-                return {"tool": "get_user_joined_gigs", "result": queries.get_user_joined_gigs(user_id)}
+                result = crwd.fetch_user_joined_gigs(user_id)
+                if result.get("error") is None and "items" in result:
+                    return {"action": "get_user_gigs", "result": result}
 
         if _matches(message, _WAITLISTED_GIGS_PATTERNS):
             if user_id:
-                return {"tool": "get_waitlisted_gigs", "result": queries.get_waitlisted_gigs(user_id)}
+                result = crwd.fetch_waitlisted_gigs(user_id)
+                if result.get("error") is None and "items" in result:
+                    return {"action": "get_waitlisted_gigs", "result": result}
 
         if _matches(message, _HISTORY_PATTERNS):
             if user_id:
-                return {"tool": "get_user_gig_history", "result": queries.get_user_gig_history(user_id)}
+                result = crwd.fetch_user_gig_history(user_id)
+                if result.get("error") is None and "items" in result:
+                    return {"action": "get_user_gig_history", "result": result}
 
         if _matches(message, _PROFILE_PATTERNS):
             target_id = _extract_object_id(message) or user_id
             if target_id:
-                return {"tool": "get_user_profile_by_id", "result": queries.get_user_profile_by_id(target_id)}
+                result = crwd.fetch_user_profile(target_id)
+                if result.get("success"):
+                    return {"action": "get_user", "result": result}
 
         oid = _extract_object_id(message)
         gig_name = _extract_gig_name(message)
         if oid and not _matches(message, _PROFILE_PATTERNS):
             try:
                 parse_object_id(oid)
-                result = queries.get_gig_details(gig_id=oid)
+                result = crwd.fetch_gig_details(oid, full=True)
                 if result.get("success"):
-                    return {"tool": "get_gig_details", "result": result}
+                    return {"action": "get_gig_details", "result": result}
             except ValueError:
                 pass
 
         if _matches(message, _GIG_DETAILS_PATTERNS) or gig_name:
             ref = gig_name or message
-            result = queries.get_gig_details(name=ref)
+            result = crwd.fetch_gig_details(ref, full=True)
             if result.get("success"):
-                return {"tool": "get_gig_details", "result": result}
+                return {"action": "get_gig_details", "result": result}
 
     except Exception as exc:
         logger.warning("app-chatbot intent router failed: %s", exc)
@@ -152,25 +163,26 @@ def format_router_context(
     """Build pre_llm_call context from intent router + user identity line."""
     lines = [
         "[Data access policy]",
-        "- Fetch CRWD/gig/user data ONLY via: get_active_gigs, get_user_profile_by_id,",
-        "  get_gig_details, get_user_gig_history, get_user_joined_gigs, get_waitlisted_gigs.",
+        "- Fetch CRWD/gig/user data ONLY via the `crwd_db` tool actions:",
+        "  list_active_gigs, get_user, get_gig_details, get_user_gig_history,",
+        "  get_user_gigs, get_waitlisted_gigs.",
         "- Do not attempt direct MongoDB queries for database data.",
-        "- If no predefined tool covers the question, say so and ask the user to rephrase.",
+        "- If no predefined action covers the question, say so and ask the user to rephrase.",
     ]
     if default_user_id:
         lines.append(
-            f"Current CLI user_id: {default_user_id} (from APP_CHATBOT_DEFAULT_USER_ID)"
+            f"Current CLI user_id: {default_user_id} (from CRWD_DEFAULT_USER_ID)"
         )
 
     routed = route_intent(user_message, default_user_id)
     if routed:
-        tool_name = routed.get("tool", "unknown")
+        action = routed.get("action", "unknown")
         payload = routed.get("result", {})
         lines.extend([
             "",
             "[Database Context]",
-            f"Source: auto-prefetch via `{tool_name}` on crwd_staging.",
-            "Answer from this data when sufficient. Call the same tool again if you need fresh or paginated results.",
+            f"Source: auto-prefetch via crwd_db action `{action}`.",
+            "Answer from this data when sufficient. Call crwd_db again if you need fresh or paginated results.",
             "",
             json.dumps(payload, indent=2, default=str),
         ])
