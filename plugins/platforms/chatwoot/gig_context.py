@@ -11,35 +11,20 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 from plugins.platforms.chatwoot.coach_context import (
     cross_user_request_active,
     resolve_member_crwd_id,
 )
+from plugins.platforms.chatwoot.gig_intent import (
+    GigScope,
+    ambiguity_guidance_block,
+    classify_gig_scope,
+    extract_gig_query_hint,
+)
 
 logger = logging.getLogger(__name__)
-
-_GIG_INTENT_PATTERNS = (
-    re.compile(r"\bnext steps?\b", re.I),
-    re.compile(r"\bwhat should i do\b", re.I),
-    re.compile(r"\bwhat(?:'s| is) my status\b", re.I),
-    re.compile(r"\bmy gigs?\b", re.I),
-    re.compile(r"\bcurrent gigs?\b", re.I),
-    re.compile(r"\bgigs? i('ve| have) joined\b", re.I),
-    re.compile(r"\bwaitlist(?:ed)? gigs?\b", re.I),
-    re.compile(r"\bpending approval\b", re.I),
-    re.compile(r"\b(?:my )?receipt\b", re.I),
-    re.compile(r"\b(?:my )?proof\b", re.I),
-    re.compile(r"\b(?:my )?review\b", re.I),
-    re.compile(r"\b(?:my )?payout\b", re.I),
-    re.compile(r"\b(?:my )?payment\b", re.I),
-    re.compile(r"\bhow(?:'s| is) .+ going\b", re.I),
-    re.compile(r"\bgig details\b", re.I),
-    re.compile(r"\btell me about .+ gig\b", re.I),
-    re.compile(r"\bwhere am i\b", re.I),
-    re.compile(r"\bwhat(?:'s| is) left\b", re.I),
-)
 
 _WAITLIST_PATTERNS = (
     re.compile(r"\bwaitlist(?:ed)?\b", re.I),
@@ -68,33 +53,13 @@ def _matches(message: str, patterns) -> bool:
     return any(p.search(message) for p in patterns)
 
 
-def should_prefetch_gig_context(user_message: str) -> bool:
-    """Return True when the inbound message likely needs gig progress data."""
-    msg = (user_message or "").strip()
-    if not msg:
-        return False
-    if _matches(msg, _GIG_INTENT_PATTERNS):
-        return True
-    return bool(_AMBIGUOUS_FALLBACK.search(msg))
-
-
-def _extract_gig_name(message: str) -> str:
-    text = (message or "").strip()
-    for prefix in (
-        "next steps for ",
-        "status for ",
-        "tell me about ",
-        "how is ",
-        "how's ",
-    ):
-        if text.lower().startswith(prefix):
-            name = text[len(prefix):].strip(" ?.")
-            if name.lower() not in {"you", "yourself", "u", "me", "my gig", "my gigs"}:
-                return name
-    quoted = re.search(r'"([^"]+)"', text)
-    if quoted:
-        return quoted.group(1).strip()
-    return ""
+def should_prefetch_gig_context(
+    user_message: str,
+    conversation_history: Optional[Sequence[Any]] = None,
+) -> bool:
+    """Return True when the inbound message needs enrolled gig progress data."""
+    scope = classify_gig_scope(user_message, conversation_history)
+    return scope in ("enrolled", "ambiguous")
 
 
 def build_gig_context_block(
@@ -102,6 +67,7 @@ def build_gig_context_block(
     user_message: str = "",
     *,
     limit: int = 5,
+    scope: GigScope = "enrolled",
 ) -> Optional[str]:
     """Fetch gig status and format the injection block, or None on failure."""
     if not user_id:
@@ -113,7 +79,8 @@ def build_gig_context_block(
         return None
 
     include_waitlisted = _matches(user_message, _WAITLIST_PATTERNS)
-    gig_name = _extract_gig_name(user_message)
+    gig_name = extract_gig_query_hint(user_message)
+    query_hint = gig_name
 
     try:
         payload = build_user_gig_status(
@@ -127,8 +94,7 @@ def build_gig_context_block(
         return None
 
     items = payload.get("items") or []
-    if not items and not include_waitlisted:
-        # Ambiguous fallback: prefetch only when member has a small active set.
+    if not items and not include_waitlisted and scope == "enrolled":
         if not _AMBIGUOUS_FALLBACK.search(user_message or ""):
             return None
         try:
@@ -139,30 +105,40 @@ def build_gig_context_block(
         if not items or len(items) > 3:
             return None
 
-    if not items:
+    if not items and scope != "ambiguous":
         return None
 
-    slim = {
-        "active_gigs": [
-            {
-                "gig_id": row.get("gig_id"),
-                "gig_name": row.get("gig_name"),
-                "gig_type": row.get("gig_type"),
-                "stage": row.get("stage"),
-                "next_step": row.get("next_step"),
-                "buy_link": row.get("buy_link"),
-                "handoff_recommended": row.get("handoff_recommended"),
-            }
-            for row in items
-        ],
-        "count": len(items),
-    }
-    return "\n".join([
-        "[CRWD gig context]",
-        "Source: get_user_gig_status (crwd_staging). Answer from this data; "
-        "do not give generic lifecycle steps when a next_step is present.",
-        json.dumps(slim, indent=2, default=str),
-    ])
+    parts: list[str] = []
+    if items:
+        slim = {
+            "active_gigs": [
+                {
+                    "gig_id": row.get("gig_id"),
+                    "gig_name": row.get("gig_name"),
+                    "gig_type": row.get("gig_type"),
+                    "stage": row.get("stage"),
+                    "next_step": row.get("next_step"),
+                    "buy_link": row.get("buy_link"),
+                    "handoff_recommended": row.get("handoff_recommended"),
+                }
+                for row in items
+            ],
+            "count": len(items),
+        }
+        parts.extend([
+            "[CRWD gig context]",
+            "Source: get_user_gig_status (crwd_staging). Answer from this data; "
+            "do not give generic lifecycle steps when a next_step is present.",
+            json.dumps(slim, indent=2, default=str),
+        ])
+
+    if scope == "ambiguous":
+        parts.append(ambiguity_guidance_block(query_hint))
+
+    if not parts:
+        return None
+
+    return "\n".join(parts)
 
 
 def gig_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
@@ -176,7 +152,9 @@ def gig_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
             return None
 
         user_message = str(kwargs.get("user_message") or "")
-        if not should_prefetch_gig_context(user_message):
+        history = kwargs.get("conversation_history")
+        scope = classify_gig_scope(user_message, history)
+        if scope is None or scope == "available":
             return None
 
         contact_id = str(kwargs.get("sender_id") or "").strip()
@@ -186,7 +164,7 @@ def gig_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
         if not user_id:
             return None
 
-        block = build_gig_context_block(user_id, user_message)
+        block = build_gig_context_block(user_id, user_message, scope=scope)
         if not block:
             return None
         return {"context": block}

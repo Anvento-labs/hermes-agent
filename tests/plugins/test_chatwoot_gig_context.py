@@ -26,9 +26,19 @@ class TestIntentDetection:
         "what's my status?",
         "my gigs",
         "how is Pul Tool going?",
+        "what are target store gigs",
+        "show me gigs",
     ])
     def test_gig_intent_matches(self, msg):
         assert gc.should_prefetch_gig_context(msg) is True
+
+    @pytest.mark.parametrize("msg", [
+        "what active gigs can I join?",
+        "show me open gigs",
+        "any available gigs?",
+    ])
+    def test_available_scope_does_not_prefetch(self, msg):
+        assert gc.should_prefetch_gig_context(msg) is False
 
     def test_generic_identity_does_not_match(self):
         assert gc.should_prefetch_gig_context("who are you?") is False
@@ -96,3 +106,56 @@ class TestGigContextHook:
             sender_id="55",
             user_message="what are my next steps?",
         ) is None
+
+    def test_ambiguous_injects_guidance(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        payload = {
+            "_type": "user_gig_status",
+            "items": [{
+                "gig_id": "g1",
+                "gig_name": "Target Store Promo",
+                "gig_type": "irl",
+                "stage": "purchase",
+                "next_step": "Buy the product at Target.",
+                "buy_link": None,
+                "handoff_recommended": False,
+            }],
+        }
+        with patch.object(gc, "resolve_member_crwd_id", return_value="user1"), patch(
+            "tools.crwd_db_tool.build_user_gig_status",
+            return_value=payload,
+        ):
+            out = gc.gig_context_hook(
+                platform="chatwoot",
+                sender_id="55",
+                user_message="what are target store gigs",
+            )
+        assert out is not None
+        assert "[CRWD gig context]" in out["context"]
+        assert "[Gig intent guidance]" in out["context"]
+        assert "target store" in out["context"].lower()
+
+    def test_available_message_skips_hook(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        with patch.object(gc, "resolve_member_crwd_id", return_value="user1"):
+            out = gc.gig_context_hook(
+                platform="chatwoot",
+                sender_id="55",
+                user_message="what active gigs can I join?",
+            )
+        assert out is None
+
+    def test_ambiguous_without_enrolled_still_injects_guidance(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        payload = {"_type": "user_gig_status", "items": []}
+        with patch.object(gc, "resolve_member_crwd_id", return_value="user1"), patch(
+            "tools.crwd_db_tool.build_user_gig_status",
+            return_value=payload,
+        ):
+            out = gc.gig_context_hook(
+                platform="chatwoot",
+                sender_id="55",
+                user_message="what are target store gigs",
+            )
+        assert out is not None
+        assert "[Gig intent guidance]" in out["context"]

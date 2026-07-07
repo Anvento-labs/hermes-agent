@@ -95,6 +95,20 @@ Find gigs and explain them against the member's **real** data — not in the abs
 For the deeper lifecycle detail, load
 `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
 
+## Ambiguous enrolled vs available
+
+When a `[Gig intent guidance]` block is present in the turn, follow it exactly:
+
+1. **Answer enrolled first** — use `[CRWD gig context]` (filter by store/topic in the
+   message when relevant). Quote real `next_step`, payout, and deadline from that data.
+2. **One clarifying question** — end with a single short follow-up asking whether they
+   meant open/available gigs they have **not** joined yet (mirror the store/topic they
+   mentioned, e.g. Target store gigs).
+3. **Do not list available gigs in the same turn** — wait for confirmation before calling
+   `list_active_gigs`.
+4. **No enrolled match** — if none of their enrolled gigs match the store/topic, say so
+   clearly, then still ask the clarifying question about open/available gigs.
+
 ## Pitfalls
 
 - Don't quote a gig's payout/deadline from memory — look it up.
