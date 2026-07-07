@@ -592,7 +592,14 @@ class ChatwootAdapter(BasePlatformAdapter):
             )
             if not last.success:
                 return last
-        return last or SendResult(success=True)
+        result = last or SendResult(success=True)
+        # Customer-visible replies should clear Chatwoot's typing bubble so the
+        # widget composer unlocks.  The gateway refresh loop may still be
+        # running until the handler finishes; explicit off here covers clarify
+        # prompts and multi-chunk delivery races.
+        if result.success and not private:
+            await self.stop_typing(chat_id)
+        return result
 
     async def _post_message(
         self,
