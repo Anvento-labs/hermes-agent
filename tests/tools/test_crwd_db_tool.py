@@ -11,11 +11,18 @@ from tools import crwd_db_tool as t
 class TestAvailability:
     def test_unavailable_without_uri(self, monkeypatch):
         monkeypatch.delenv("CRWD_MONGO_URI", raising=False)
+        monkeypatch.delenv("MONGODB_URI", raising=False)
         assert t.check_crwd_db_requirements() is False
 
     def test_available_with_uri(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://localhost:27017/")
         assert t.check_crwd_db_requirements() is True
+
+    def test_legacy_mongodb_uri_bridges(self, monkeypatch):
+        monkeypatch.delenv("CRWD_MONGO_URI", raising=False)
+        monkeypatch.setenv("MONGODB_URI", "mongodb://legacy:27017/")
+        assert t.check_crwd_db_requirements() is True
+        assert t._resolve_mongo_uri() == "mongodb://legacy:27017/"
 
     def test_handler_errors_without_uri(self, monkeypatch):
         monkeypatch.delenv("CRWD_MONGO_URI", raising=False)
@@ -384,3 +391,70 @@ class TestRouter:
             out = json.loads(t.crwd_db_tool({"action": "list_active_gigs"}))
         # Raw driver error must not leak to the model.
         assert out == {"error": "query failed"}
+
+
+class TestUserGigHistory:
+    def test_requires_user_id(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        out = json.loads(t.crwd_db_tool({"action": "get_user_gig_history"}))
+        assert "error" in out
+        assert "user_id" in out["error"]
+
+    def test_returns_membership_rows(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        user_id = "69a6f191cb29b0b371b3a156"
+        mock_members = MagicMock()
+        member_cursor = MagicMock()
+        mock_members.find.return_value = member_cursor
+        member_cursor.sort.return_value = member_cursor
+        member_cursor.limit.return_value = [
+            {
+                "_id": t._oid("69e6a4d6cea992cbda22b381"),
+                "crwd_id": t._oid("69b8614f1083b9302fd0a9a7"),
+                "status": "Completed",
+                "isAccepted": True,
+                "hasPaid": True,
+            },
+        ]
+        mock_db = _fake_db({"added_crwd_members": mock_members})
+        mock_db.list_collection_names.return_value = []
+        with patch.object(t, "_db", return_value=mock_db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user_gig_history",
+                "user_id": user_id,
+            }))
+        assert out["_type"] == "user_gig_history"
+        assert out["count"] == 1
+        assert out["items"][0]["status"] == "Completed"
+
+
+class TestGigDetailsFull:
+    def test_full_mode_returns_rich_payload(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        gig_oid = t._oid("69b8614f1083b9302fd0a9a7")
+        mock_crwds = MagicMock()
+        mock_crwds.find_one.return_value = {
+            "_id": gig_oid,
+            "name": "Summer Gig",
+            "gig_stores": [{"store_name": "Target", "products": []}],
+            "terms_description": "Terms here",
+            "targeting_rules": [],
+            "locations": [],
+        }
+        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_gig_details",
+                "query": "Summer Gig",
+                "full": True,
+            }))
+        assert out["full"] is True
+        assert out["items"][0]["name"] == "Summer Gig"
+        assert out["items"][0]["terms_description"] == "Terms here"
+
+
+class TestPrefetchHelpers:
+    def test_fetch_active_gigs_requires_user_id(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        out = t.fetch_active_gigs("")
+        assert out["success"] is False
+        assert "user_id" in out["error"]

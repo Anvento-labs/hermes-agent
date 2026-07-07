@@ -1,22 +1,20 @@
-"""app-chatbot plugin — CRWD support tools + MongoDB-first intent router."""
+"""app-chatbot plugin — CLI prefetch hook for CRWD MongoDB queries via crwd_db."""
 
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, Optional
 
-from . import handlers, schemas
+from tools import crwd_db_tool as crwd
+
 from ._utils import default_user_id
 from .router import format_router_context
 
 logger = logging.getLogger(__name__)
 
-_TOOLSET = "app-chatbot"
 
-
-def _mongodb_available() -> bool:
-    return bool(os.getenv("MONGODB_URI"))
+def _crwd_db_available() -> bool:
+    return crwd.check_crwd_db_requirements()
 
 
 def _plugin_settings() -> Dict[str, Any]:
@@ -24,6 +22,8 @@ def _plugin_settings() -> Dict[str, Any]:
 
 
 def _prefetch_context(user_message: str = "", **_: Any) -> Optional[Dict[str, str]]:
+    if not _crwd_db_available():
+        return None
     settings = _plugin_settings()
     context = format_router_context(
         user_message,
@@ -36,21 +36,3 @@ def _prefetch_context(user_message: str = "", **_: Any) -> Optional[Dict[str, st
 
 def register(ctx) -> None:
     ctx.register_hook("pre_llm_call", _prefetch_context)
-
-    tool_pairs = [
-        (schemas.GET_ACTIVE_GIGS, handlers.get_active_gigs),
-        (schemas.GET_USER_PROFILE_BY_ID, handlers.get_user_profile_by_id),
-        (schemas.GET_GIG_DETAILS, handlers.get_gig_details),
-        (schemas.GET_USER_GIG_HISTORY, handlers.get_user_gig_history),
-        (schemas.GET_USER_JOINED_GIGS, handlers.get_user_joined_gigs),
-        (schemas.GET_WAITLISTED_GIGS, handlers.get_waitlisted_gigs),
-    ]
-    for schema, handler in tool_pairs:
-        ctx.register_tool(
-            name=schema["name"],
-            toolset=_TOOLSET,
-            schema=schema,
-            handler=handler,
-            check_fn=_mongodb_available,
-            requires_env=["MONGODB_URI"],
-        )

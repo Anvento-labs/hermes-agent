@@ -1375,8 +1375,8 @@ DEFAULT_CONFIG = {
                                       # after live validation.
     },
 
-    # MongoDB settings for the app-chatbot plugin. Connection string is a secret in
-    # ~/.hermes/.env (MONGODB_URI); limits live here.
+    # MongoDB settings for CRWD access. Connection string is a secret in
+    # ~/.hermes/.env (CRWD_MONGO_URI); database name can also be set via CRWD_MONGO_DB.
     "mongodb": {
         "default_database": "",
         "max_rows": 100,
@@ -3519,26 +3519,8 @@ OPTIONAL_ENV_VARS = {
         "password": True,
         "category": "tool",
     },
-    "MONGODB_URI": {
-        "description": "MongoDB connection string for app-chatbot CRWD query tools",
-        "prompt": "MongoDB URI (mongodb:// or mongodb+srv://)",
-        "url": "https://www.mongodb.com/docs/manual/reference/connection-string/",
-        "tools": [
-            "get_active_gigs", "get_user_profile_by_id", "get_gig_details",
-            "get_user_gig_history", "get_user_joined_gigs", "get_waitlisted_gigs",
-        ],
-        "password": True,
-        "category": "tool",
-    },
-    "APP_CHATBOT_DEFAULT_USER_ID": {
-        "description": "Default MongoDB users._id for app-chatbot CLI context and tool defaults",
-        "prompt": "Default CRWD user id (24-char hex ObjectId)",
-        "url": None,
-        "password": False,
-        "category": "tool",
-    },
     "CRWD_MONGO_URI": {
-        "description": "CRWD MongoDB connection string for the crwd_db tool",
+        "description": "CRWD MongoDB connection string for crwd_db and CLI prefetch",
         "prompt": "CRWD MongoDB URI (mongodb:// or mongodb+srv://)",
         "url": "https://www.mongodb.com/docs/manual/reference/connection-string/",
         "tools": ["crwd_db"],
@@ -3546,10 +3528,25 @@ OPTIONAL_ENV_VARS = {
         "category": "tool",
     },
     "CRWD_MONGO_DB": {
-        "description": "CRWD MongoDB database name for the crwd_db tool (default: crwd_staging)",
+        "description": "CRWD MongoDB database name for crwd_db (default: crwd_staging; config mongodb.default_database is a fallback)",
         "prompt": "CRWD MongoDB database name",
         "url": None,
         "tools": ["crwd_db"],
+        "password": False,
+        "category": "tool",
+        "advanced": True,
+    },
+    "CRWD_DEFAULT_USER_ID": {
+        "description": "Default MongoDB users._id for CLI prefetch and local CRWD testing",
+        "prompt": "Default CRWD user id (24-char hex ObjectId)",
+        "url": None,
+        "password": False,
+        "category": "tool",
+    },
+    "APP_CHATBOT_DEFAULT_USER_ID": {
+        "description": "Deprecated alias for CRWD_DEFAULT_USER_ID (CLI prefetch default user)",
+        "prompt": "Default CRWD user id (24-char hex ObjectId)",
+        "url": None,
         "password": False,
         "category": "tool",
         "advanced": True,
