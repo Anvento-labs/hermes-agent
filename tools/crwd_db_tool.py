@@ -27,6 +27,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from tools.crwd_urls import attach_gig_url
 from tools.lazy_deps import FeatureUnavailable, ensure
 from tools.registry import registry, tool_error
 
@@ -251,7 +252,7 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
             "address": gig.get("address"), "city": gig.get("city"),
             "state": gig.get("state"), "postal_code": gig.get("postal_code"),
         }
-    return _serialize_doc(out)
+    return attach_gig_url(_serialize_doc(out), inline_name=True)
 
 
 def _full_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
@@ -456,13 +457,13 @@ def _get_gig_details(query: str, top_n: int = 3, full: bool = False) -> str:
         if top_n == 1 and s >= 0.9:
             items.append({**_full_gig(gig), "score": s})
         else:
-            items.append({
+            items.append(attach_gig_url({
                 "score": s,
                 "_id": str(gig.get("_id")),
                 "name": gig.get("name"),
                 "status": gig.get("status"),
                 "end_date": _serialize_doc(gig.get("end_date")),
-            })
+            }, inline_name=True))
     return json.dumps(
         {"_type": "gig_match_candidates", "query": query, "items": items},
         ensure_ascii=False,
@@ -705,16 +706,38 @@ def _sort_members_by_gig_end_date(
 
 
 def _first_buy_link(gig: Dict[str, Any], purchases: List[Dict[str, Any]]) -> Optional[str]:
-    for row in purchases:
-        url = row.get("product_url")
-        if url:
-            return str(url)
+    products = _collect_buy_products(gig, purchases)
+    if not products:
+        return None
+    return products[0].get("product_url")
+
+
+def _collect_buy_products(
+    gig: Dict[str, Any],
+    purchases: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, str]]:
+    """Return all buyable products (name + url), purchases first, then gig catalog.
+
+    Dedupes by ``product_url``. Used so product-link answers can list every
+    SKU instead of only the first ``buy_link``.
+    """
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(name: Any, url: Any) -> None:
+        link = str(url or "").strip()
+        if not link or link in seen:
+            return
+        seen.add(link)
+        title = str(name or "").strip() or "Buy here"
+        out.append({"name": title, "product_url": link})
+
+    for row in purchases or []:
+        _add(row.get("product_name") or row.get("name"), row.get("product_url"))
     for store in gig.get("gig_stores") or []:
         for product in store.get("products") or []:
-            url = product.get("product_url")
-            if url:
-                return str(url)
-    return None
+            _add(product.get("name"), product.get("product_url"))
+    return out
 
 
 def compute_gig_stage(
@@ -729,7 +752,8 @@ def compute_gig_stage(
     """Derive machine-readable stage + coach-facing next_step for one membership."""
     gig_name = str(gig.get("name") or "this gig").strip()
     gig_type = _gig_type_key(gig)
-    buy_link = _first_buy_link(gig, purchases)
+    products = _collect_buy_products(gig, purchases)
+    buy_link = products[0]["product_url"] if products else None
 
     is_accepted = membership.get("isAccepted")
     has_paid = membership.get("hasPaid")
@@ -1111,7 +1135,8 @@ def build_user_gig_status(
             product_reviews=prog["product_reviews"],
             order_receipt_reviews=prog["order_receipt_reviews"],
         )
-        items.append({
+        products = _collect_buy_products(gig, prog["purchases"])
+        items.append(attach_gig_url({
             "gig_id": str(gid),
             "gig_name": gig.get("name"),
             "gig_type": _gig_type_key(gig),
@@ -1126,8 +1151,9 @@ def build_user_gig_status(
             "stage": stage_info["stage"],
             "next_step": stage_info["next_step"],
             "buy_link": stage_info.get("buy_link"),
+            "products": products,
             "handoff_recommended": stage_info.get("handoff_recommended", False),
-        })
+        }, inline_name=True))
 
     return {
         "_type": "user_gig_status",
@@ -1157,12 +1183,50 @@ def _get_user_gig_status(
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _get_user_products(user_id: str, limit: int = 10) -> str:
-    """Products a member is approved to buy for a gig (name + buy link)."""
+def _get_user_products(user_id: str, limit: int = 10, crwd_id: str = "") -> str:
+    """Products a member is approved to buy for a gig (name + buy link).
+
+    When ``crwd_id`` is set, prefer that gig's full ``gig_stores.products``
+    catalog (and any matching purchase rows) so multi-SKU gigs list every
+    product — not only the latest purchase or a single ``buy_link``.
+    """
     user_id = (user_id or "").strip()
     if not user_id:
         return tool_error("user_id is required for get_user_products")
     row_limit = max(1, min(int(limit or 10), _HARD_LIMIT))
+    crwd_id = (crwd_id or "").strip()
+
+    if crwd_id:
+        # Multi-SKU gigs often exceed the generic default of 10.
+        row_limit = max(1, min(int(limit or _HARD_LIMIT), _HARD_LIMIT))
+        oid = _oid(crwd_id)
+        gig = None
+        if oid is not None:
+            gig = _db()[_COLL_CRWDS].find_one(
+                {"_id": oid, "isDeleted": {"$ne": True}},
+                _GIG_FIELDS,
+                max_time_ms=_MAX_TIME_MS,
+            )
+        purchases = []
+        purchase_filter: Dict[str, Any] = {
+            "user_id": {"$in": _id_values(user_id)},
+            "isDeleted": {"$ne": True},
+        }
+        if oid is not None:
+            purchase_filter["crwd_id"] = {"$in": [oid, crwd_id]}
+        else:
+            purchase_filter["crwd_id"] = crwd_id
+        purchases = list(
+            _db()[_COLL_PURCHASES].find(
+                purchase_filter, _PURCHASE_FIELDS, max_time_ms=_MAX_TIME_MS
+            )
+        )
+        items = _collect_buy_products(gig or {}, purchases)[:row_limit]
+        return json.dumps(
+            {"_type": "user_products", "items": items, "crwd_id": crwd_id, "error": None},
+            ensure_ascii=False,
+        )
+
     cursor = (
         _db()[_COLL_PURCHASES]
         .find(
@@ -1408,7 +1472,11 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 user_id=args.get("user_id", ""), limit=args.get("limit", 10)
             )
         if action == "get_user_products":
-            return _get_user_products(user_id=args.get("user_id", ""), limit=args.get("limit", 10))
+            return _get_user_products(
+                user_id=args.get("user_id", ""),
+                limit=args.get("limit", 10),
+                crwd_id=args.get("crwd_id", "") or args.get("gig_id", ""),
+            )
         if action == "get_user_receipts":
             return _get_user_receipts(user_id=args.get("user_id", ""), limit=args.get("limit", 10))
         if action == "get_user_notifications":
@@ -1499,7 +1567,15 @@ CRWD_DB_SCHEMA = {
             },
             "crwd_id": {
                 "type": "string",
-                "description": "Optional gig _id filter (get_user_gig_status)",
+                "description": (
+                    "Optional gig _id. For get_user_gig_status: filter to that gig. "
+                    "For get_user_products: return every product on that gig's catalog "
+                    "(plus the member's purchase rows for it), not only one buy_link."
+                ),
+            },
+            "gig_id": {
+                "type": "string",
+                "description": "Alias of crwd_id for get_user_products",
             },
             "gig_name": {
                 "type": "string",

@@ -3559,6 +3559,14 @@ OPTIONAL_ENV_VARS = {
         "category": "tool",
         "advanced": True,
     },
+    "CRWD_APP_BASE_URL": {
+        "description": "CRWD member web app base URL used to build gig deep links (/my-gigs/<gig_id>) in crwd_db payloads",
+        "prompt": "CRWD app base URL (e.g. https://live-staging.joincrwd.com)",
+        "url": None,
+        "tools": ["crwd_db"],
+        "password": False,
+        "category": "tool",
+    },
     "DOTS_CLIENT_ID": {
         "description": "Dot payments client id for the dot tool (member transfers); used with DOTS_API_KEY as HTTP Basic auth",
         "prompt": "Dot client id",

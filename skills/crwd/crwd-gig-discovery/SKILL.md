@@ -9,7 +9,7 @@ metadata:
     requires_toolsets: [crwd, web]
     config:
       - key: crwd.app_base_url
-        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
+        description: Base URL of the CRWD member web app, used to build gig deep links (/my-gigs/<gig_id>)
         default: "https://live-staging.joincrwd.com"
         prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
@@ -53,23 +53,22 @@ Find gigs and explain them against the member's **real** data — not in the abs
 5. **Past participation / history:** `get_user_gig_history` with `user_id`. Returns prior
    membership rows (including completed, rejected, or deleted gigs). Use for "what gigs have
    I done before?" — not `get_user_gigs` (in-progress only) or `list_active_gigs`.
-6. **Turn the gig's name into a hyperlink, every time you name a gig.** Every `crwd_db`
-   action above returns the gig's `_id` — build `<crwd.app_base_url>/explore/<_id>`
-   (default base `https://live-staging.joincrwd.com`; use the configured
-   `skills.config.crwd.app_base_url` value if one is injected into context) and make the
-   **gig name itself** the markdown link: `[Summer Skincare Bundle](https://live-staging.joincrwd.com/explore/6a3411008972fa2d14ce8fe0)`.
-   This is proactive — do it the first time a gig is named, don't wait to be asked, and never
-   post the raw URL as a separate "here's the link" line. The **only** reason to skip linking
-   is that this exact gig was already hyperlinked earlier in the same conversation — after
-   that, mention it as plain text, don't re-render the same link every message. Any other
-   gig (or the same gig in a new conversation) still gets linked. Full detail:
-   `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
-7. **Include the product name + buy link by default.** `list_active_gigs` and
-   `get_gig_details` already return each store's `products[]` with `name` and `product_url`.
-   When you describe a gig, surface those links alongside payout/deadline/store — don't wait
-   for the member to ask "where do I buy it?" Links are helpful; give the real `product_url`,
-   don't just name the product. (Only skip them if the gig genuinely has no product, or the
-   member explicitly says they just want the list.)
+6. **Paste linked `name` / `gig_name` verbatim — the title IS the clickable link.**
+   Every `crwd_db` action returns `name` / `gig_name` already as markdown
+   `[Title](…/my-gigs/<_id>)`. Copy that field as-is into the reply. Do **not**
+   write `Title — url` or append a bare URL after the name. Do not invent
+   `/explore/` links. On "show more", call `list_active_gigs` with `next_offset`
+   and use the fresh linked `name` — don't paraphrase titles from memory.
+   Full detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
+7. **Include every product name + buy link.** `list_active_gigs` / `get_gig_details`
+   return `stores[].products[]` with `name` + `product_url`. `get_user_gig_status`
+   returns `products[]` (full list) plus legacy `buy_link` (first only). For
+   product-link questions, list **every** `products[]` entry as
+   `[Product Name](product_url)` — one per line, clickable product name. Never
+   claim there's only one link when `products[]` has more, and never substitute
+   `gig_url`. Prefer `get_user_products` with `crwd_id` / `get_gig_details` when
+   answering a specific gig. Keep gig-title markdown and product markdown on
+   separate lines.
 8. **For a live (in-store / `irl`) gig, help them get to the store.** The gig data names the
    retailer (`stores[].store_name`) and, for `irl` gigs, an `address`/`city`/`state`/
    `postal_code`. Surface that store info by default when you describe a live gig.
@@ -125,16 +124,16 @@ When a `[Gig intent guidance]` block is present in the turn, follow it exactly:
 - `get_gig_details` returns *candidates*; picking the wrong `_id` sends the member to the
   wrong gig. Confirm first.
 - Approval is gated by CRWD/the brand — you can report the state, but don't promise approval.
-- Product links are in the gig data already — quote the real `product_url`; never paraphrase
-  a link or omit it just because the member didn't explicitly ask for it.
+- Product links: quote every `products[]` / `product_url` as `[Product Name](url)`.
+  Never paraphrase, never reuse `gig_url`, and never stop at the first `buy_link`
+  when more products exist.
 - **Store locating:** never invent a store, address, or phone number; if a bare ZIP matches
   several stores, give the top match and note there are others. Hours online can be stale
   (say "confirm by phone" for "open now?"), and you can't see live inventory (say "call to
   confirm," never "it's in stock"). Keep store replies to name + address + phone + hours.
-- **Gig links:** never post a bare/separate URL and never fabricate a link from memory — the
-  gig name in prose IS the link, built only from a real `_id` `crwd_db` just returned. Don't
-  withhold a link for any reason other than "already linked this exact gig earlier in this
-  conversation" — when in doubt, link it.
+- **Gig links:** paste linked `name` / `gig_name` from `crwd_db` verbatim
+  (`[Title](…/my-gigs/<id>)`). Never append a separate bare URL, never rebuild
+  `/explore/` links, and never replace the markdown with only `name_plain`.
 
 ## Verification
 
@@ -148,5 +147,5 @@ When a `[Gig intent guidance]` block is present in the turn, follow it exactly:
 - "Show me more" used `next_offset` from the prior page when more gigs existed.
 - You confirmed the specific gig `_id` when there was any ambiguity.
 - The member knows their current step in the flow and what to do next.
-- Every gig name mentioned is a working markdown link to `<app_base_url>/explore/<_id>`,
-  unless that exact gig was already linked earlier in this conversation.
+- Every gig named used the verbatim linked `name` / `gig_name` from `crwd_db`
+  (clickable title), with no trailing bare URL.

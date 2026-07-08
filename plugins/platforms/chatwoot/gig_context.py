@@ -117,10 +117,13 @@ def build_gig_context_block(
                 {
                     "gig_id": row.get("gig_id"),
                     "gig_name": row.get("gig_name"),
+                    "gig_name_plain": row.get("gig_name_plain"),
+                    "gig_url": row.get("gig_url"),
                     "gig_type": row.get("gig_type"),
                     "stage": row.get("stage"),
                     "next_step": row.get("next_step"),
                     "buy_link": row.get("buy_link"),
+                    "products": row.get("products") or [],
                     "handoff_recommended": row.get("handoff_recommended"),
                 }
                 for row in items
@@ -131,6 +134,16 @@ def build_gig_context_block(
             "[CRWD gig context]",
             "Source: get_user_gig_status (crwd_staging). Answer from this data; "
             "do not give generic lifecycle steps when a next_step is present.",
+            "When naming a gig, paste gig_name verbatim — it is already "
+            "[Title](gig_url) markdown so the title is clickable. Do NOT also "
+            "append a bare URL after the name.",
+            "CRITICAL product links: each gig may have multiple products[]. "
+            "When the member asks for product/buy links, list EVERY item in "
+            "products[] as markdown [product_name](product_url) — one per line. "
+            "Never say there is only one link if products[] has more. "
+            "buy_link is only the first product URL (legacy); prefer products[]. "
+            "Never use gig_url as a buy/product link. Keep gig-title markdown "
+            "and product markdown on separate lines.",
             json.dumps(slim, indent=2, default=str),
         ])
 

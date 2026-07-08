@@ -9,7 +9,7 @@ metadata:
     requires_toolsets: [crwd]
     config:
       - key: crwd.app_base_url
-        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
+        description: Base URL of the CRWD member web app, used to build gig deep links (/my-gigs/<gig_id>)
         default: "https://live-staging.joincrwd.com"
         prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
@@ -35,19 +35,16 @@ skill (proof is just the tail of doing the gig).
 1. **Confirm the gig and its type** (live `irl` vs online) with `crwd_db` `get_gig_details`.
    If it's cleanly neither, go by the gig's real `type_of_work_proof`/requirements rather than
    forcing it into one bucket — and hand off if what's required is unclear.
-2. **Turn the gig's name into a hyperlink.** Build `<crwd.app_base_url>/explore/<_id>` from
-   the `_id` `get_gig_details` (or the injected `[CRWD gig context]`) just returned — default
-   base `https://live-staging.joincrwd.com`, or the configured
-   `skills.config.crwd.app_base_url` value if injected — and make the **gig name itself** the
-   markdown link everywhere it's named, not a separate URL line. Skip it only if this exact
-   gig was already linked earlier in the conversation; every other gig still gets linked. Full
+2. **Paste linked `name` / `gig_name` verbatim.** `get_gig_details` and the injected
+   `[CRWD gig context]` already return those as `[Title](…/my-gigs/<_id>)`. Copy the
+   field as-is so the title is clickable — do **not** also append a bare URL. Full
    detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
-3. **Surface the exact product + buy link.** Use `get_user_products` (the member's approved
-   products for their gigs — product name + `product_url`). The current member's CRWD
-   `user_id` is provided in context (a `[CRWD member]` line) — pass it straight through;
-   `get_user_products` and `get_user_receipts` both take that `user_id`. Give them the real
-   link, don't describe it vaguely — include the buy link by default whenever a product is
-   involved, not only when they ask "where do I buy?"
+3. **Surface every product + buy link.** Prefer `get_user_products` with `crwd_id`
+   (or `get_gig_details` / status `products[]`) so multi-SKU gigs list all items —
+   not only legacy `buy_link`. Render each as `[Product Name](product_url)` on its
+   own line (clickable product name). Never substitute `gig_url`. Pass the member
+   `user_id` from `[CRWD member]` context. Include buy links by default whenever
+   a product is involved.
 4. **Live gig steps:** go to the store (see `crwd-gig-discovery` if they need to find it),
    buy the product, and **call out any special requirement precisely** — e.g. *two purchases
    with two different payment methods* means two separate transactions and two receipts.
@@ -72,8 +69,8 @@ skill (proof is just the tail of doing the gig).
 - Don't paraphrase a buy link or requirement — quote the real product URL and the exact
   requirement from the gig data.
 - Rejected submissions always go to a human. Never coach a resubmission.
-- Never post a bare/separate gig URL — the gig name in prose IS the link. Don't withhold the
-  link for any reason other than "already linked this exact gig earlier in this conversation."
+- Never replace linked `name` / `gig_name` with a plain title or `Title — url` —
+  paste the markdown field verbatim and do not append a bare URL.
 
 ## Verification
 
@@ -81,5 +78,4 @@ skill (proof is just the tail of doing the gig).
 - Any special requirement (e.g. two payment methods) was stated precisely.
 - The member knows the exact proof to submit for their gig type.
 - Rejections were handed off, not self-diagnosed.
-- The gig name was rendered as a hyperlink to `<app_base_url>/explore/<_id>`, unless it was
-  already linked earlier in this conversation.
+- Gig titles were paste-ready markdown links from `crwd_db`, with no trailing bare URL.

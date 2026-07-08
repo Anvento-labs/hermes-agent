@@ -199,6 +199,47 @@ class TestNewUserActions:
         assert out["_type"] == "user_products"
         assert out["items"][0]["product_name"] == "X"
 
+    def test_get_user_products_by_crwd_id_lists_all_catalog_skus(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        gig_oid = t._oid("69e6a4d6cea992cbda22b381")
+        mock_crwds = MagicMock()
+        mock_crwds.find_one.return_value = {
+            "_id": gig_oid,
+            "name": "CRWD Cohort- Amazon",
+            "gig_stores": [{
+                "store_name": "Amazon",
+                "products": [
+                    {"name": "Gut Intellect", "product_url": "https://amazon.com/a"},
+                    {"name": "Shroom Vroom", "product_url": "https://amazon.com/b"},
+                ],
+            }],
+        }
+        mock_purchases = MagicMock()
+        mock_purchases.find.return_value = []
+        with patch.object(t, "_db", return_value=_fake_db({
+            "crwds": mock_crwds,
+            "user_product_purchases": mock_purchases,
+        })):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user_products",
+                "user_id": "69a6f191cb29b0b371b3a156",
+                "crwd_id": "69e6a4d6cea992cbda22b381",
+            }))
+        assert out["_type"] == "user_products"
+        assert len(out["items"]) == 2
+        assert out["items"][0]["name"] == "Gut Intellect"
+        assert out["items"][0]["product_url"] == "https://amazon.com/a"
+
+    def test_collect_buy_products_dedupes_and_prefers_purchases(self):
+        gig = {"gig_stores": [{"products": [
+            {"name": "A", "product_url": "http://a"},
+            {"name": "B", "product_url": "http://b"},
+            {"name": "A2", "product_url": "http://a"},
+        ]}]}
+        purchases = [{"product_name": "P", "product_url": "http://p"}]
+        items = t._collect_buy_products(gig, purchases)
+        assert [i["product_url"] for i in items] == ["http://p", "http://a", "http://b"]
+
     def test_notifications_custom_query_redacts_tokens(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
