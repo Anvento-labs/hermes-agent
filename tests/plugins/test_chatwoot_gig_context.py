@@ -43,6 +43,11 @@ class TestIntentDetection:
     def test_generic_identity_does_not_match(self):
         assert gc.should_prefetch_gig_context("who are you?") is False
 
+    def test_part_of_classifies_as_enrolled(self):
+        from plugins.platforms.chatwoot import gig_intent as gi
+
+        assert gi.classify_gig_scope("what gigs am i part of?") == "enrolled"
+
 
 class TestGigContextHook:
     def test_skips_non_chatwoot(self, monkeypatch):

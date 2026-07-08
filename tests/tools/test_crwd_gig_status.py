@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from unittest.mock import MagicMock, patch
 
@@ -176,10 +177,7 @@ class TestBuildUserGigStatus:
         gig_oid = t._oid("69e6a4d6cea992cbda22b381")
 
         mock_members = MagicMock()
-        member_cursor = MagicMock()
-        mock_members.find.return_value = member_cursor
-        member_cursor.sort.return_value = member_cursor
-        member_cursor.limit.return_value = [
+        mock_members.find.return_value = [
             {
                 "member": member_oid,
                 "crwd_id": gig_oid,
@@ -237,6 +235,117 @@ class TestBuildUserGigStatus:
         assert out["items"][0]["gig_name"] == "Pul Tool"
         assert out["items"][0]["stage"] == "need_purchase"
 
+    def test_sorts_by_soonest_end_date(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        user_id = "69a6f191cb29b0b371b3a156"
+        member_oid = t._oid(user_id)
+        gig_near = t._oid("69e6a4d6cea992cbda22b3a1")
+        gig_mid = t._oid("69e6a4d6cea992cbda22b3a2")
+        gig_far = t._oid("69e6a4d6cea992cbda22b3a3")
+
+        mock_members = MagicMock()
+        mock_members.find.return_value = [
+            {"member": member_oid, "crwd_id": gig_far, "isAccepted": True, "status": "Active"},
+            {"member": member_oid, "crwd_id": gig_near, "isAccepted": True, "status": "Active"},
+            {"member": member_oid, "crwd_id": gig_mid, "isAccepted": True, "status": "Active"},
+        ]
+        mock_crwds = MagicMock()
+        mock_crwds.find.return_value = [
+            {"_id": gig_near, "name": "Soon", "gig_type": "web_based", "gig_stores": [],
+             "end_date": dt.datetime(2026, 7, 1)},
+            {"_id": gig_mid, "name": "Mid", "gig_type": "web_based", "gig_stores": [],
+             "end_date": dt.datetime(2026, 9, 1)},
+            {"_id": gig_far, "name": "Far", "gig_type": "web_based", "gig_stores": [],
+             "end_date": dt.datetime(2026, 12, 1)},
+        ]
+        empty_progress = {
+            "purchases": [], "store_orders": [], "product_reviews": [],
+            "order_receipt_reviews": [],
+        }
+
+        with patch.object(
+            t,
+            "_db",
+            return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
+        ), patch.object(t, "_progress_for_crwd", return_value=empty_progress):
+            out = t.build_user_gig_status(user_id)
+
+        assert [row["gig_name"] for row in out["items"]] == ["Soon", "Mid", "Far"]
+
+    def test_default_limit_allows_more_than_five(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        user_id = "69a6f191cb29b0b371b3a156"
+        member_oid = t._oid(user_id)
+        members = []
+        gigs = []
+        for i in range(8):
+            gid = t._oid(f"69e6a4d6cea992cbda22b3a{i:x}")
+            members.append({
+                "member": member_oid,
+                "crwd_id": gid,
+                "isAccepted": True,
+                "status": "Active",
+            })
+            gigs.append({
+                "_id": gid,
+                "name": f"Gig {i}",
+                "gig_type": "web_based",
+                "gig_stores": [],
+                "end_date": dt.datetime(2026, 7, i + 1),
+            })
+
+        mock_members = MagicMock()
+        mock_members.find.return_value = members
+        mock_crwds = MagicMock()
+        mock_crwds.find.return_value = gigs
+        empty_progress = {
+            "purchases": [], "store_orders": [], "product_reviews": [],
+            "order_receipt_reviews": [],
+        }
+
+        with patch.object(
+            t,
+            "_db",
+            return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
+        ), patch.object(t, "_progress_for_crwd", return_value=empty_progress):
+            out = t.build_user_gig_status(user_id)
+
+        assert len(out["items"]) == 8
+
+
+class TestEndDateSorting:
+    def test_sort_members_by_gig_end_date(self):
+        oid_near = t._oid("69e6a4d6cea992cbda22b3a1")
+        oid_mid = t._oid("69e6a4d6cea992cbda22b3a2")
+        oid_far = t._oid("69e6a4d6cea992cbda22b3a3")
+        members = [
+            {"crwd_id": oid_far},
+            {"crwd_id": oid_near},
+            {"crwd_id": oid_mid},
+        ]
+        gigs_by_id = {
+            str(oid_near): {"end_date": dt.datetime(2026, 7, 1)},
+            str(oid_mid): {"end_date": dt.datetime(2026, 9, 1)},
+            str(oid_far): {"end_date": dt.datetime(2026, 12, 1)},
+        }
+        sorted_members = t._sort_members_by_gig_end_date(members, gigs_by_id)
+        assert [str(m["crwd_id"]) for m in sorted_members] == [
+            str(oid_near), str(oid_mid), str(oid_far),
+        ]
+
+    def test_missing_end_date_sorts_last(self):
+        oid_dated = t._oid("69e6a4d6cea992cbda22b3a1")
+        oid_missing = t._oid("69e6a4d6cea992cbda22b3a2")
+        members = [{"crwd_id": oid_missing}, {"crwd_id": oid_dated}]
+        gigs_by_id = {
+            str(oid_dated): {"end_date": dt.datetime(2026, 7, 1)},
+            str(oid_missing): {},
+        }
+        sorted_members = t._sort_members_by_gig_end_date(members, gigs_by_id)
+        assert [str(m["crwd_id"]) for m in sorted_members] == [
+            str(oid_dated), str(oid_missing),
+        ]
+
 
 class TestGetUserGigStatusAction:
     def test_router_action(self, monkeypatch):
@@ -255,10 +364,7 @@ class TestGetUserGigStatusAction:
     def test_get_user_gigs_uses_joined_filter(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         mock_members = MagicMock()
-        cursor = MagicMock()
-        mock_members.find.return_value = cursor
-        cursor.sort.return_value = cursor
-        cursor.limit.return_value = []
+        mock_members.find.return_value = []
         mock_crwds = MagicMock()
         mock_crwds.find.return_value = []
         with patch.object(

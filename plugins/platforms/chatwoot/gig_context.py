@@ -66,17 +66,19 @@ def build_gig_context_block(
     user_id: str,
     user_message: str = "",
     *,
-    limit: int = 5,
+    limit: int | None = None,
     scope: GigScope = "enrolled",
 ) -> Optional[str]:
     """Fetch gig status and format the injection block, or None on failure."""
     if not user_id:
         return None
     try:
-        from tools.crwd_db_tool import build_user_gig_status
+        from tools.crwd_db_tool import _HARD_LIMIT, build_user_gig_status
     except Exception as exc:
         logger.debug("[crwd-gig-ctx] import failed: %s", exc)
         return None
+
+    row_limit = _HARD_LIMIT if limit is None else limit
 
     include_waitlisted = _matches(user_message, _WAITLIST_PATTERNS)
     gig_name = extract_gig_query_hint(user_message)
@@ -87,7 +89,7 @@ def build_gig_context_block(
             user_id,
             gig_name=gig_name,
             include_waitlisted=include_waitlisted,
-            limit=limit,
+            limit=row_limit,
         )
     except Exception as exc:
         logger.debug("[crwd-gig-ctx] build_user_gig_status failed: %s", exc)
@@ -98,7 +100,7 @@ def build_gig_context_block(
         if not _AMBIGUOUS_FALLBACK.search(user_message or ""):
             return None
         try:
-            payload = build_user_gig_status(user_id, limit=limit)
+            payload = build_user_gig_status(user_id, limit=row_limit)
             items = payload.get("items") or []
         except Exception:
             return None

@@ -43,6 +43,7 @@ _ENROLLED_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
         r"\bmy joined gigs?\b",
         r"\bgigs? i(?:'ve| have) joined\b",
         r"\bgigs? i am (?:in|on)\b",
+        r"\bgigs? (?:am )?i(?:'m| am)? part of\b",
         r"\bwaitlist(?:ed)? gigs?\b",
         r"\bpending approval\b",
         r"\b(?:my )?receipt\b",

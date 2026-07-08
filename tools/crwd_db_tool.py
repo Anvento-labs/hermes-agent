@@ -50,8 +50,6 @@ _ALLOWED_COLLECTIONS = {
     _COLL_CRWDS, _COLL_USERS, _COLL_MEMBERS,
     _COLL_PURCHASES, _COLL_RECEIPTS, _COLL_NOTIFS,
 }
-_GIG_STATUS_CAP = 5
-
 _HARD_LIMIT = 20
 _MAX_TIME_MS = 5000
 _GIG_TOPN_CAP = 10
@@ -512,7 +510,6 @@ def _get_waitlisted_gigs(user_id: str, limit: int = 10) -> str:
     members = list(
         _db()[_COLL_MEMBERS]
         .find(member_filter, _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
-        .limit(row_limit)
     )
     crwd_ids = [m["crwd_id"] for m in members if m.get("crwd_id") is not None]
     gigs_by_id = {}
@@ -522,6 +519,7 @@ def _get_waitlisted_gigs(user_id: str, limit: int = 10) -> str:
         ):
             gigs_by_id[str(gig["_id"])] = _slim_gig(gig)
 
+    members = _sort_members_by_gig_end_date(members, gigs_by_id)[:row_limit]
     items = []
     for m in members:
         items.append({
@@ -542,8 +540,6 @@ def _get_user_gigs(user_id: str, limit: int = 10) -> str:
     members = list(
         _db()[_COLL_MEMBERS]
         .find(_joined_member_filter(user_id), _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
-        .sort("updatedAt", -1)
-        .limit(row_limit)
     )
     crwd_ids = [m["crwd_id"] for m in members if m.get("crwd_id") is not None]
     gigs_by_id = {}
@@ -553,6 +549,7 @@ def _get_user_gigs(user_id: str, limit: int = 10) -> str:
         ):
             gigs_by_id[str(gig["_id"])] = _slim_gig(gig)
 
+    members = _sort_members_by_gig_end_date(members, gigs_by_id)[:row_limit]
     items = []
     for m in members:
         items.append({
@@ -669,6 +666,42 @@ def _gig_type_key(gig: Dict[str, Any]) -> str:
     if gt in ("web_based", "web", "online", "amazon"):
         return "web"
     return gt or "unknown"
+
+
+def _end_date_sort_key(gig: Optional[Dict[str, Any]]) -> tuple[int, float]:
+    """Ascending sort key for gig end_date; gigs without a date sort last."""
+    missing = (1, float("inf"))
+    if not gig:
+        return missing
+    end = gig.get("end_date")
+    if end is None:
+        return missing
+    if hasattr(end, "timestamp"):
+        return (0, end.timestamp())
+    if isinstance(end, dict):
+        raw = end.get("$date")
+        if isinstance(raw, (int, float)):
+            ts = raw / 1000.0 if raw > 1e12 else raw
+            return (0, ts)
+        if isinstance(raw, str):
+            try:
+                import datetime as dt
+
+                parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                return (0, parsed.timestamp())
+            except ValueError:
+                return missing
+    return missing
+
+
+def _sort_members_by_gig_end_date(
+    members: List[Dict[str, Any]],
+    gigs_by_id: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    return sorted(
+        members,
+        key=lambda m: _end_date_sort_key(gigs_by_id.get(str(m.get("crwd_id")))),
+    )
 
 
 def _first_buy_link(gig: Dict[str, Any], purchases: List[Dict[str, Any]]) -> Optional[str]:
@@ -1027,22 +1060,20 @@ def build_user_gig_status(
     crwd_id: str = "",
     gig_name: str = "",
     include_waitlisted: bool = False,
-    limit: int = _GIG_STATUS_CAP,
+    limit: int = _HARD_LIMIT,
 ) -> Dict[str, Any]:
     """Build gig status payload (dict) for one member — used by tool + prefetch hook."""
     user_id = (user_id or "").strip()
     if not user_id:
         return {"_type": "user_gig_status", "items": [], "error": "user_id is required"}
 
-    row_limit = max(1, min(int(limit or _GIG_STATUS_CAP), _HARD_LIMIT))
+    row_limit = max(1, min(int(limit or _HARD_LIMIT), _HARD_LIMIT))
     db = _db()
 
     member_filter = _joined_member_filter(user_id)
     members = list(
         db[_COLL_MEMBERS]
         .find(member_filter, _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
-        .sort("updatedAt", -1)
-        .limit(row_limit * 2)
     )
 
     waitlisted: List[Dict[str, Any]] = []
@@ -1050,8 +1081,6 @@ def build_user_gig_status(
         waitlisted = list(
             db[_COLL_MEMBERS]
             .find(_waitlisted_member_filter(user_id), _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
-            .sort("updatedAt", -1)
-            .limit(row_limit)
         )
         members = members + waitlisted
 
@@ -1065,7 +1094,8 @@ def build_user_gig_status(
 
     members = _filter_membership_by_gig_ref(
         members, gigs_by_id, crwd_id=crwd_id, gig_name=gig_name
-    )[:row_limit]
+    )
+    members = _sort_members_by_gig_end_date(members, gigs_by_id)[:row_limit]
 
     items = []
     for m in members:
@@ -1113,7 +1143,7 @@ def _get_user_gig_status(
     crwd_id: str = "",
     gig_name: str = "",
     include_waitlisted: bool = False,
-    limit: int = _GIG_STATUS_CAP,
+    limit: int = _HARD_LIMIT,
 ) -> str:
     payload = build_user_gig_status(
         user_id,
@@ -1389,7 +1419,7 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 crwd_id=args.get("crwd_id", ""),
                 gig_name=args.get("gig_name", ""),
                 include_waitlisted=bool(args.get("include_waitlisted")),
-                limit=args.get("limit", _GIG_STATUS_CAP),
+                limit=args.get("limit", _HARD_LIMIT),
             )
         if action == "custom_query":
             return _custom_query(
@@ -1449,7 +1479,7 @@ CRWD_DB_SCHEMA = {
                     "get_user_receipts", "get_user_notifications", "custom_query",
                 ],
             },
-            "limit": {"type": "integer", "description": "max rows per page (capped at 20; list_active_gigs default 5)"},
+            "limit": {"type": "integer", "description": "max rows per page (capped at 20; list_active_gigs default 5; get_user_gig_status default 20)"},
             "offset": {
                 "type": "integer",
                 "description": (
