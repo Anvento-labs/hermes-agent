@@ -12,6 +12,19 @@ class TestClassifyConversationLabels:
         labels = auto.classify_conversation_labels("what gigs are near me?")
         assert "gig-discovery" in labels
 
+    def test_browse_while_enrolled_stays_discovery(self):
+        with patch.object(
+            auto,
+            "_member_has_active_gigs",
+            return_value=(True, {"Amazon Gig"}),
+        ):
+            labels = auto.classify_conversation_labels(
+                "what gigs are near me?",
+                contact_id="contact-1",
+            )
+        assert labels == ["gig-discovery"]
+        assert "mid-gig-support" not in labels
+
     def test_payment(self):
         labels = auto.classify_conversation_labels("did I get paid yet?")
         assert "payment-payout" in labels
@@ -41,11 +54,27 @@ class TestClassifyConversationLabels:
                 handoff_requested=True,
                 contact_id="contact-1",
             )
-        assert labels == ["gig-active", "handoff-escalation"]
+        assert labels == ["proof-submission", "handoff-escalation"]
 
     def test_proof_without_enrollment(self):
-        labels = auto.classify_conversation_labels("how do I submit proof?")
-        assert labels == ["gig-active"]
+        with patch.object(auto, "_member_has_active_gigs", return_value=(False, set())):
+            labels = auto.classify_conversation_labels(
+                "how do I submit proof?",
+                contact_id="contact-1",
+            )
+        assert labels == ["proof-submission"]
+
+    def test_proof_with_enrollment(self):
+        with patch.object(
+            auto,
+            "_member_has_active_gigs",
+            return_value=(True, {"Amazon Gig"}),
+        ):
+            labels = auto.classify_conversation_labels(
+                "how do I submit proof?",
+                contact_id="contact-1",
+            )
+        assert labels == ["proof-submission", "mid-gig-support"]
 
     def test_mid_gig_unenrolled_falls_back_to_discovery(self):
         with patch.object(auto, "_member_has_active_gigs", return_value=(False, set())):
@@ -65,7 +94,31 @@ class TestClassifyConversationLabels:
                 "what's my deadline on the amazon gig?",
                 contact_id="contact-1",
             )
-        assert labels == ["gig-active"]
+        assert labels == ["mid-gig-support"]
+
+    def test_mid_gig_enrolled_nameless(self):
+        with patch.object(
+            auto,
+            "_member_has_active_gigs",
+            return_value=(True, {"Amazon Gig"}),
+        ):
+            labels = auto.classify_conversation_labels(
+                "what's my deadline?",
+                contact_id="contact-1",
+            )
+        assert labels == ["mid-gig-support"]
+
+    def test_mid_gig_named_unmatched_is_discovery(self):
+        with patch.object(
+            auto,
+            "_member_has_active_gigs",
+            return_value=(True, {"Target Gig"}),
+        ):
+            labels = auto.classify_conversation_labels(
+                "what's my deadline on the amazon gig?",
+                contact_id="contact-1",
+            )
+        assert labels == ["gig-discovery"]
 
     def test_unenrolled_gig_details_is_discovery(self):
         with patch.object(auto, "_member_has_active_gigs", return_value=(False, set())):
@@ -132,15 +185,17 @@ class TestAutoLabelConversation:
     def test_applies_labels(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
             auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": ["gig-active"]},
+            return_value={"success": True, "existing": ["proof-submission"]},
+        ), patch.object(
+            auto, "_member_has_active_gigs", return_value=(False, set()),
         ), patch.object(
             auto, "_assign_labels",
-            return_value={"success": True, "labels": ["gig-active"], "error": None},
+            return_value={"success": True, "labels": ["proof-submission"], "error": None},
         ) as assign:
             out = auto.auto_label_conversation("how do I submit proof?")
         assert out["success"] is True
-        assert out["classified"] == ["gig-active"]
-        assign.assert_called_once_with("1", "42", ["gig-active"], replace=True)
+        assert out["classified"] == ["proof-submission"]
+        assign.assert_called_once_with("1", "42", ["proof-submission"], replace=True)
 
 
 class TestAutoLabelHook:

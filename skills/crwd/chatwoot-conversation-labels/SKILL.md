@@ -31,7 +31,8 @@ no-ops gracefully there).
 | Member intent | Label(s) |
 |---------------|----------|
 | Browse/apply gigs, CRWD overview | `gig-discovery` |
-| Proof or enrolled mid-gig work | `gig-active` |
+| Proof / receipt / submit (any enrollment) | `proof-submission` |
+| Enrolled-gig help or enrolled + proof | `mid-gig-support` (+ `proof-submission` when proof) |
 | Paid? when? payout history | `payment-payout` |
 | App navigation or broken UI | `app-help` |
 | Ban, eligibility, opt-out, scam signals | `account-eligibility` |
@@ -54,7 +55,8 @@ tool to **override** auto-classification.
 ## Multi-label examples
 
 - Payout late + page won't load → `["payment-payout", "app-help"]`
-- Rejected proof + you called `crwd_handoff` → `["gig-active", "handoff-escalation"]`
+- Rejected proof + you called `crwd_handoff` → `["proof-submission", "handoff-escalation"]`
+- Enrolled proof submit → `["proof-submission", "mid-gig-support"]`
 - Simple "where is Explore?" → `["app-help"]`
 
 ## Common Pitfalls

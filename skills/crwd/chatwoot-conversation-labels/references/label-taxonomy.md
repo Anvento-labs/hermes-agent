@@ -8,23 +8,35 @@ exactly to `chatwoot_labels` `assign_labels`.
 Applied **only when you call `crwd_handoff`** in that turn — not from member
 text alone. Pair with the topic label when possible.
 
-- You looped in a human after rejected proof → `["gig-active", "handoff-escalation"]`
+- You looped in a human after rejected proof → `["proof-submission", "handoff-escalation"]`
 - Opt-out processed via handoff → `["account-eligibility", "handoff-escalation"]`
 
-## gig-active
+## proof-submission
 
 Proof/receipt/submit questions **always** qualify (enrollment not required).
 
-Mid-gig help (deadline, requirements, next step) requires the member to be
-**enrolled** in that gig — otherwise use `gig-discovery`.
+When the member is also enrolled, pair with `mid-gig-support`.
 
-- "How do I submit proof?" → `gig-active` (even if not in a gig yet)
-- "What's my deadline?" (enrolled) → `gig-active`
+- "How do I submit proof?" (not enrolled) → `proof-submission`
+- "How do I submit proof?" (enrolled) → `["proof-submission", "mid-gig-support"]`
+- "Here's my receipt" / "my submission was rejected" → `proof-submission` (+ `mid-gig-support` if enrolled)
+
+## mid-gig-support
+
+Conversation about an **enrolled** gig: deadlines, requirements, next steps,
+gig details for a named enrolled gig, or proof while enrolled.
+
+A named gig in the message must match an enrollment. Unenrolled or unmatched
+named-gig help → `gig-discovery`.
+
+- "What's my deadline?" (enrolled) → `mid-gig-support`
+- "What's my deadline on the Amazon gig?" (enrolled in Amazon) → `mid-gig-support`
 - "What's my deadline?" (not enrolled) → `gig-discovery`
+- Unenrolled "tell me about the Amazon gig" → `gig-discovery`
 
 ## gig-discovery
 
-- "What gigs are near me?"
+- "What gigs are near me?" (even if enrolled)
 - "How do I find gigs in Explore?"
 - "What is CRWD?" / "How does CRWD work?"
 - Unenrolled "tell me about the Amazon gig"

@@ -270,7 +270,11 @@ def _extract_gig_name(message: str) -> str:
     quoted = re.search(r'"([^"]+)"', text)
     if quoted:
         return quoted.group(1).strip()
-    about = re.search(r"\b(?:about|for) (?:the )?(.+?) gig\b", text, re.IGNORECASE)
+    about = re.search(
+        r"\b(?:about|for|on) (?:the )?(.+?) gig\b",
+        text,
+        re.IGNORECASE,
+    )
     if about:
         return about.group(1).strip()
     return ""
@@ -366,33 +370,64 @@ def _handoff_in_current_turn(
     return False
 
 
-def _apply_gig_active_label(
+def _ensure_label(matched: List[str], label: str, *, prefer_front: bool = False) -> None:
+    """Ensure ``label`` is in ``matched`` (``_finalize_labels`` caps at 2)."""
+    if label in matched:
+        return
+    if prefer_front:
+        matched.insert(0, label)
+    else:
+        matched.append(label)
+
+
+def _apply_proof_and_mid_gig_labels(
     text: str,
     user_message: str,
     contact_id: str,
     matched: List[str],
 ) -> None:
-    """Add ``gig-active`` or ``gig-discovery`` based on proof vs mid-gig intent."""
-    if "gig-active" in matched or "gig-discovery" in matched:
+    """Add ``proof-submission`` and/or ``mid-gig-support`` / ``gig-discovery``.
+
+    Proof/submit language always gets ``proof-submission``. When the member
+    also has enrollments, pair with ``mid-gig-support``.
+
+    Mid-gig help (no proof) requires enrollment. A named gig must match an
+    enrolled gig (rule C); nameless mid-gig help while enrolled also qualifies.
+    Browse phrases already matched as ``gig-discovery`` are left alone for
+    mid-gig, but proof can still be added (and may replace discovery when
+    enrolled).
+    """
+    proof = _matches_any(text, _PROOF_PATTERNS)
+    need_membership = proof or _matches_any(text, _MID_GIG_PATTERNS)
+    enrolled = False
+    gig_names: Set[str] = set()
+    if need_membership:
+        enrolled, gig_names = _member_has_active_gigs(contact_id)
+
+    if proof:
+        _ensure_label(matched, "proof-submission", prefer_front=True)
+        if enrolled:
+            if "gig-discovery" in matched:
+                matched.remove("gig-discovery")
+            _ensure_label(matched, "mid-gig-support")
         return
 
-    if _matches_any(text, _PROOF_PATTERNS):
-        matched.append("gig-active")
+    if "mid-gig-support" in matched or "gig-discovery" in matched:
         return
 
     if not _matches_any(text, _MID_GIG_PATTERNS):
         return
 
-    enrolled, gig_names = _member_has_active_gigs(contact_id)
     if not enrolled:
         matched.append("gig-discovery")
         return
 
     gig_name = _extract_gig_name(user_message)
-    if _gig_name_in_enrolled(gig_name, gig_names):
-        matched.append("gig-active")
-    else:
+    if gig_name and not _gig_name_in_enrolled(gig_name, gig_names):
         matched.append("gig-discovery")
+        return
+
+    matched.append("mid-gig-support")
 
 
 def _finalize_labels(topics: List[str], handoff: bool) -> List[str]:
@@ -433,7 +468,7 @@ def classify_conversation_labels(
         if len(matched) >= _MAX_LABELS and not handoff_requested:
             break
 
-    _apply_gig_active_label(text, user_message, contact_id, matched)
+    _apply_proof_and_mid_gig_labels(text, user_message, contact_id, matched)
 
     if not matched and re.search(r"\bgig", text, re.IGNORECASE):
         matched.append("gig-discovery")
