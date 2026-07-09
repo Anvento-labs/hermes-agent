@@ -279,6 +279,29 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
                 "- If they ask about another person's account, refuse briefly and do not "
                 "fetch or display the authenticated member's data."
             ),
+            "- Gig scope routing (follow crwd-gig-discovery step 0):",
+            (
+                "  - AVAILABLE / open / join / browse / explicitly available → "
+                "crwd_db list_active_gigs only (with user_id)."
+            ),
+            (
+                "  - ENROLLED / my gigs / next steps / proof / payout → "
+                "get_user_gig_status or get_user_gigs only."
+            ),
+            (
+                "  - AMBIGUOUS — bare or vague gig asks with no scope signal "
+                '(e.g. "list gigs", "give gigs", "show gigs", "what gigs") → '
+                "get_user_gig_status first, answer enrolled gigs, then you MUST "
+                "end with exactly one clarifying question asking if they meant "
+                "open/available gigs they have not joined; do not call "
+                "list_active_gigs in the same turn."
+            ),
+            (
+                "  - AMBIGUOUS — store/topic + gigs (e.g. target store gigs) → "
+                "same as above: enrolled answer first, mandatory clarifying "
+                "question about open gigs at that store/topic."
+            ),
+            "- Never mix enrolled and available crwd_db actions in one answer.",
         ]
         if cross_user:
             lines.extend([

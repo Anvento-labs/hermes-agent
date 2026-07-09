@@ -28,16 +28,15 @@ skill (proof is just the tail of doing the gig).
 
 ## Procedure
 
-0. **Prefer injected gig context.** If a `[CRWD gig context]` block is present in
-   the turn, use each gig's `next_step` as the primary answer — call
-   `get_user_gig_status` only if context is missing or the member asks about a
-   different gig.
+0. **Load enrolled gig status.** Call `get_user_gig_status` with `user_id` from the
+   `[CRWD member]` context line. Use each gig's `next_step` as the primary answer when
+   the member asks about gigs they are in. Re-call with `gig_name` or `crwd_id` when they
+   name a specific gig.
 1. **Confirm the gig and its type** (live `irl` vs online) with `crwd_db` `get_gig_details`.
    If it's cleanly neither, go by the gig's real `type_of_work_proof`/requirements rather than
    forcing it into one bucket — and hand off if what's required is unclear.
-2. **Paste linked `name` / `gig_name` verbatim.** `get_gig_details` and the injected
-   `[CRWD gig context]` already return those as `[Title](…/my-gigs/<_id>)`. Copy the
-   field as-is so the title is clickable — do **not** also append a bare URL. Full
+2. **Paste linked `name` / `gig_name` verbatim.** `get_gig_details` and `get_user_gig_status`
+   return those as `[Title](…/my-gigs/<_id>)`. Copy the field as-is so the title is clickable — do **not** also append a bare URL. Full
    detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
 3. **Surface every product + buy link.** Prefer `get_user_products` with `crwd_id`
    (or `get_gig_details` / status `products[]`) so multi-SKU gigs list all items —

@@ -252,7 +252,7 @@ def _matches_any(text: str, patterns: Sequence[re.Pattern[str]]) -> bool:
 
 
 def _extract_gig_name(message: str) -> str:
-    """Best-effort gig name from the member message (mirrors gig_context)."""
+    """Best-effort gig name from the member message."""
     text = (message or "").strip()
     for prefix in (
         "next steps for ",

@@ -21,6 +21,7 @@ Find gigs and explain them against the member's **real** data — not in the abs
 ## When to Use
 
 - "What gigs are available?" / "Any new gigs?"
+- "List gigs" / "Give gigs" / "Show gigs" — **ambiguous** (see step 0)
 - "Tell me about the [X] gig" — payout, deadline, store, what's involved
 - "How do I apply?" / "Am I approved yet?"
 - "What gigs do I have?"
@@ -30,6 +31,22 @@ Find gigs and explain them against the member's **real** data — not in the abs
 - "What are the store hours?" / "Are they open now?"
 
 ## Procedure
+
+0. **Pick gig scope (required).** Read the member message and recent turns, then choose
+   **one** path — never mix enrolled and available actions in the same answer:
+
+   | Member intent | `crwd_db` action | Do not use |
+   |---------------|------------------|------------|
+   | Open / available / join / browse (e.g. *"What gigs are available right now?"*) | `list_active_gigs` with `user_id` | `get_user_gigs`, `get_user_gig_status` |
+   | My gigs / next steps / proof / payout / in-progress | `get_user_gig_status` (preferred) or `get_user_gigs` | `list_active_gigs` |
+   | Pending approval | `get_waitlisted_gigs` | others |
+   | Ambiguous — bare/vague (e.g. *"list gigs"*, *"give gigs"*, *"show gigs"*, *"what gigs"*) | `get_user_gig_status` → answer enrolled → **mandatory** clarifying question about open gigs | `list_active_gigs` same turn |
+   | Ambiguous — store/topic (e.g. *"What are target store gigs?"*) | same: enrolled first → **mandatory** clarifying question | `list_active_gigs` same turn |
+
+   **Ambiguous is not optional:** if the message does not clearly say available/open/join
+   *or* my/enrolled/next steps, treat it as ambiguous — even when they only say "gigs".
+
+   The `[CRWD member]` context line also states these rules — follow them and this step.
 
 1. **Available gigs to apply for:** `crwd_db` action `list_active_gigs` **with `user_id`**
    from the `[CRWD member]` context line. Returns open gigs sorted by soonest end date,
@@ -84,10 +101,10 @@ Find gigs and explain them against the member's **real** data — not in the abs
    - Suggest they **call ahead to confirm stock** — you cannot see live inventory, so never
      claim something is in stock.
 9. Explain the flow against their **actual** state, not generically: browse → apply →
-   **get approved** → perform → submit proof → get paid. If a `[CRWD gig context]`
-   block is present, quote each gig's `next_step` instead of generic lifecycle
-   advice. If they're waiting on approval, say that; if approved, point them at
-   what to do next (`crwd-gig-execution`).
+   **get approved** → perform → submit proof → get paid. Call `get_user_gig_status` when
+   you need each gig's `next_step` — quote that instead of generic lifecycle advice. If
+   they're waiting on approval, say that; if approved, point them at what to do next
+   (`crwd-gig-execution`).
 10. Be precise on **payout, deadline, and estimated time** — quote the real numbers; never guess.
 11. Offer a deadline reminder if the gig is time-sensitive (see `crwd-reminders-followups`).
 
@@ -96,21 +113,28 @@ For the deeper lifecycle detail, load
 
 ## Ambiguous enrolled vs available
 
-When a `[Gig intent guidance]` block is present in the turn, follow it exactly:
+When step 0 lands on **Ambiguous** (bare *"list gigs"*, *"give gigs"*, store/topic + gigs,
+or any gig ask without a clear available vs enrolled signal):
 
-1. **Answer enrolled first** — use `[CRWD gig context]` (filter by store/topic in the
-   message when relevant). Quote real `next_step`, payout, and deadline from that data.
-2. **One clarifying question** — end with a single short follow-up asking whether they
-   meant open/available gigs they have **not** joined yet (mirror the store/topic they
-   mentioned, e.g. Target store gigs).
+1. **Answer enrolled first** — call `get_user_gig_status` with `user_id` (and `gig_name`
+   when the message names a store or topic). Quote real `next_step`, payout, and deadline.
+2. **Mandatory clarifying question** — your reply is incomplete without this. End with
+   exactly one short follow-up, e.g. *"Were you looking for open gigs you haven't joined
+   yet? I can list those too."* Mirror any store/topic they mentioned.
 3. **Do not list available gigs in the same turn** — wait for confirmation before calling
    `list_active_gigs`.
-4. **No enrolled match** — if none of their enrolled gigs match the store/topic, say so
-   clearly, then still ask the clarifying question about open/available gigs.
+4. **No enrolled match** — if they have no enrolled gigs (or none match the topic), say so,
+   then still ask the mandatory clarifying question about open/available gigs.
+
+**Wrong:** listing enrolled gigs and stopping with no follow-up on *"list gigs"* or
+*"give gigs"*.
 
 ## Pitfalls
 
 - Don't quote a gig's payout/deadline from memory — look it up.
+- **Bare gig asks are ambiguous** — *"list gigs"*, *"give gigs"*, *"show gigs"* default to
+  enrolled via `get_user_gig_status`, then a **mandatory** clarifying question about open
+  gigs. Never stop after only listing enrolled gigs.
 - **Do not combine `list_active_gigs` and `get_user_gigs` when answering availability**
   questions — enrolled gigs belong on Home, not Explore. Use step 1 alone for "what's
   available?" and step 4 alone for "what active gigs do I have?"
