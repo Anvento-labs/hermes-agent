@@ -18,6 +18,14 @@ _AVAILABLE_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
         r"\bactive gigs?\b",
         r"\bopen gigs?\b",
         r"\bavailable (?:gigs?|campaigns?)\b",
+        r"\bgigs? (?:that are |are |is )?available\b",
+        r"\bwhat gigs? (?:are |is )?available\b",
+        r"\bwhich gigs? (?:are |is )?available\b",
+        r"\bany gigs? (?:that are |are )?available\b",
+        r"\bgigs? (?:that are |are |is )?open\b",
+        r"\bwhat gigs? (?:are |is )?open\b",
+        r"\bwhich gigs? (?:are |is )?open\b",
+        r"\bavailable (?:right )?now\b",
         r"\bwhat can i join\b",
         r"\bfind (?:a )?gig",
         r"\bbrowse\b",
@@ -213,4 +221,15 @@ def ambiguity_guidance_block(query_hint: str = "") -> str:
         "Then ask exactly one short clarifying question: were they looking for "
         f"open/available gigs{topic} they have not joined yet?",
         "Do not call list_active_gigs or list available gigs in this turn — wait for confirmation.",
+    ])
+
+
+def available_guidance_block() -> str:
+    """Instruction block for explicit available/open gig queries."""
+    return "\n".join([
+        "[CRWD available gigs context]",
+        "Source: list_active_gigs (crwd_staging) — open gigs the member has NOT joined.",
+        "Answer ONLY from this open-gig list. Do not use get_user_gigs, get_user_gig_status, "
+        "or enrolled membership data for this turn.",
+        "These gigs exclude any the member is already enrolled in.",
     ])

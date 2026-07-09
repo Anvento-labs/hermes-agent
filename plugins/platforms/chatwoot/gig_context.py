@@ -20,6 +20,7 @@ from plugins.platforms.chatwoot.coach_context import (
 from plugins.platforms.chatwoot.gig_intent import (
     GigScope,
     ambiguity_guidance_block,
+    available_guidance_block,
     classify_gig_scope,
     extract_gig_query_hint,
 )
@@ -156,6 +157,46 @@ def build_gig_context_block(
     return "\n".join(parts)
 
 
+def build_available_gigs_block(
+    user_id: str,
+    *,
+    limit: int = 10,
+) -> Optional[str]:
+    """Fetch open gigs (excluding enrolled) and format the injection block."""
+    if not user_id:
+        return None
+    try:
+        from tools import crwd_db_tool as crwd
+    except Exception as exc:
+        logger.debug("[crwd-gig-ctx] import failed: %s", exc)
+        return None
+
+    try:
+        payload = crwd.fetch_active_gigs(user_id, limit=limit)
+    except Exception as exc:
+        logger.debug("[crwd-gig-ctx] fetch_active_gigs failed: %s", exc)
+        return None
+
+    if payload.get("error"):
+        return None
+
+    items = payload.get("items") or []
+    parts = [
+        available_guidance_block(),
+        json.dumps(
+            {
+                "open_gigs": items,
+                "count": len(items),
+                "has_more": payload.get("has_more", False),
+                "total": payload.get("total"),
+            },
+            indent=2,
+            default=str,
+        ),
+    ]
+    return "\n".join(parts)
+
+
 def gig_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
     """``pre_llm_call`` hook: inject personalized gig progress when relevant."""
     try:
@@ -169,7 +210,7 @@ def gig_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
         user_message = str(kwargs.get("user_message") or "")
         history = kwargs.get("conversation_history")
         scope = classify_gig_scope(user_message, history)
-        if scope is None or scope == "available":
+        if scope is None:
             return None
 
         contact_id = str(kwargs.get("sender_id") or "").strip()
@@ -179,7 +220,10 @@ def gig_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
         if not user_id:
             return None
 
-        block = build_gig_context_block(user_id, user_message, scope=scope)
+        if scope == "available":
+            block = build_available_gigs_block(user_id)
+        else:
+            block = build_gig_context_block(user_id, user_message, scope=scope)
         if not block:
             return None
         return {"context": block}

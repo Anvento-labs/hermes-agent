@@ -25,6 +25,8 @@ class TestClassifyGigScope:
         "what can i join",
         "how do i apply",
         "browse gigs near me",
+        "What gigs are available right now?",
+        "what gigs are open",
     ])
     def test_explicit_available(self, msg):
         assert gi.classify_gig_scope(msg) == "available"

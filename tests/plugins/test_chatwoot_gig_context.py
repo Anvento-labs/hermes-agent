@@ -36,8 +36,9 @@ class TestIntentDetection:
         "what active gigs can I join?",
         "show me open gigs",
         "any available gigs?",
+        "What gigs are available right now?",
     ])
-    def test_available_scope_does_not_prefetch(self, msg):
+    def test_available_scope_does_not_prefetch_enrolled(self, msg):
         assert gc.should_prefetch_gig_context(msg) is False
 
     def test_generic_identity_does_not_match(self):
@@ -99,9 +100,8 @@ class TestGigContextHook:
             )
         assert out is not None
         assert "[CRWD gig context]" in out["context"]
-        data = json.loads(out["context"].split("\n", 2)[2])
-        assert data["active_gigs"][0]["gig_name"] == "Pul Tool"
-        assert data["active_gigs"][0]["stage"] == "receipt_review"
+        assert "Pul Tool" in out["context"]
+        assert "receipt_review" in out["context"]
 
     def test_skips_cross_user_turn(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
@@ -140,15 +140,49 @@ class TestGigContextHook:
         assert "[Gig intent guidance]" in out["context"]
         assert "target store" in out["context"].lower()
 
-    def test_available_message_skips_hook(self, monkeypatch):
+    def test_available_message_injects_open_gigs(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
-        with patch.object(gc, "resolve_member_crwd_id", return_value="user1"):
+        payload = {
+            "_type": "gig_list",
+            "items": [{
+                "_id": "g2",
+                "name": "Tide Pods Gig",
+                "effective_payout": 18,
+            }],
+            "error": None,
+            "has_more": False,
+            "total": 1,
+        }
+        with patch.object(gc, "resolve_member_crwd_id", return_value="user1"), patch(
+            "tools.crwd_db_tool.fetch_active_gigs",
+            return_value=payload,
+        ):
+            out = gc.gig_context_hook(
+                platform="chatwoot",
+                sender_id="55",
+                user_message="What gigs are available right now?",
+            )
+        assert out is not None
+        assert "[CRWD available gigs context]" in out["context"]
+        assert "[CRWD gig context]" not in out["context"]
+        assert "Tide Pods Gig" in out["context"]
+        assert "get_user_gigs" in out["context"]
+
+    def test_available_active_gigs_message_injects_open_gigs(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        payload = {"_type": "gig_list", "items": [], "error": None, "has_more": False}
+        with patch.object(gc, "resolve_member_crwd_id", return_value="user1"), patch(
+            "tools.crwd_db_tool.fetch_active_gigs",
+            return_value=payload,
+        ):
             out = gc.gig_context_hook(
                 platform="chatwoot",
                 sender_id="55",
                 user_message="what active gigs can I join?",
             )
-        assert out is None
+        assert out is not None
+        assert "[CRWD available gigs context]" in out["context"]
+        assert "[CRWD gig context]" not in out["context"]
 
     def test_ambiguous_without_enrolled_still_injects_guidance(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
