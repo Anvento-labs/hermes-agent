@@ -1794,6 +1794,8 @@ DEFAULT_CONFIG = {
         "platforms": {
             "telegram": {"streaming": True},
             "discord": {"streaming": False},
+            # Customer-facing support widget: final answer only, no mid-turn narration.
+            "chatwoot": {"interim_assistant_messages": False},
         },
         # Gateway runtime-metadata footer appended to the FINAL message of a turn
         # (disabled by default to keep replies minimal). When enabled, renders

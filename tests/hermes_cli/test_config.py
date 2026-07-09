@@ -1093,6 +1093,22 @@ class TestInterimAssistantMessageConfig:
     def test_default_config_enables_interim_assistant_messages(self):
         assert DEFAULT_CONFIG["display"]["interim_assistant_messages"] is True
 
+    def test_default_config_disables_interim_messages_for_chatwoot(self):
+        assert (
+            DEFAULT_CONFIG["display"]["platforms"]["chatwoot"]["interim_assistant_messages"]
+            is False
+        )
+
+    def test_load_config_merges_chatwoot_interim_override(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(yaml.safe_dump({"display": {}}), encoding="utf-8")
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            loaded = load_config()
+
+        assert loaded["display"]["interim_assistant_messages"] is True
+        assert loaded["display"]["platforms"]["chatwoot"]["interim_assistant_messages"] is False
+
     def test_migrate_to_v15_adds_interim_assistant_message_gate(self, tmp_path):
         config_path = tmp_path / "config.yaml"
         config_path.write_text(

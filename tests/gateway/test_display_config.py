@@ -204,7 +204,7 @@ class TestPlatformDefaults:
         """Signal, BlueBubbles, etc. default to 'off' tool progress."""
         from gateway.display_config import resolve_display_setting
 
-        for plat in ("signal", "bluebubbles", "weixin", "wecom", "dingtalk", "whatsapp_cloud"):
+        for plat in ("signal", "bluebubbles", "weixin", "wecom", "dingtalk", "whatsapp_cloud", "chatwoot"):
             assert resolve_display_setting({}, plat, "tool_progress") == "off", plat
 
     def test_whatsapp_cloud_locked_to_low_tier_until_edit_message_lands(self):
@@ -280,6 +280,32 @@ class TestPlatformDefaults:
         assert resolve_display_setting(config, "telegram", "interim_assistant_messages") is False
         assert resolve_display_setting(config, "telegram", "long_running_notifications") is False
         assert resolve_display_setting(config, "telegram", "busy_ack_detail") is True
+
+    def test_chatwoot_customer_widget_defaults(self):
+        """Chatwoot is a customer-facing inbox with no message editing —
+        mid-turn narration must not spam permanent outbound messages."""
+        from gateway.display_config import resolve_display_setting
+
+        assert resolve_display_setting({}, "chatwoot", "interim_assistant_messages") is False
+        assert resolve_display_setting({}, "chatwoot", "tool_progress") == "off"
+        assert resolve_display_setting({}, "chatwoot", "streaming") is False
+
+        # Global interim=true must not override the per-platform false default.
+        config = {
+            "display": {
+                "interim_assistant_messages": True,
+                "platforms": {"chatwoot": {"interim_assistant_messages": False}},
+            }
+        }
+        assert resolve_display_setting(config, "chatwoot", "interim_assistant_messages") is False
+
+        # Explicit per-platform opt-in still works.
+        config_opt_in = {
+            "display": {
+                "platforms": {"chatwoot": {"interim_assistant_messages": True}},
+            }
+        }
+        assert resolve_display_setting(config_opt_in, "chatwoot", "interim_assistant_messages") is True
 
 
 # ---------------------------------------------------------------------------

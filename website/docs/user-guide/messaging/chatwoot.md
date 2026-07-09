@@ -51,6 +51,23 @@ trace is on but no agent token is configured and the bot token can't post
 private notes, the note is skipped with a warning — your customer reply is never
 affected.
 
+## Final-answer-only delivery (default)
+
+Chatwoot defaults to **final-answer-only** replies
+(`display.platforms.chatwoot.interim_assistant_messages: false`). Customers see
+the completed answer for each turn — not mid-turn narration like "Let me check the
+next page…" while the agent paginates tool results. During long turns the
+**typing indicator** still shows (requires `CHATWOOT_AGENT_TOKEN`).
+
+To re-enable mid-turn status messages:
+
+```yaml
+display:
+  platforms:
+    chatwoot:
+      interim_assistant_messages: true
+```
+
 ## Scheduled / proactive delivery
 
 Set `CHATWOOT_HOME_CHANNEL` to an `account:conversation` id (e.g. `1:42`) and use
