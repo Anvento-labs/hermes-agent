@@ -869,6 +869,51 @@ async def test_run_agent_suppresses_interim_commentary_when_disabled(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_chatwoot_suppresses_interim_commentary_without_platform_opt_in(
+    monkeypatch, tmp_path
+):
+    """Global interim_assistant_messages=true must not leak narration on Chatwoot."""
+    adapter, result = await _run_with_agent(
+        monkeypatch,
+        tmp_path,
+        CommentaryAgent,
+        session_id="sess-chatwoot-commentary-suppressed",
+        platform=Platform("chatwoot"),
+        adapter_cls=NonEditingProgressCaptureAdapter,
+        config_data={"display": {"interim_assistant_messages": True}},
+    )
+
+    assert result.get("already_sent") is not True
+    assert not any(call["content"] == "I'll inspect the repo first." for call in adapter.sent)
+
+
+@pytest.mark.asyncio
+async def test_chatwoot_surfaces_interim_commentary_with_platform_opt_in(
+    monkeypatch, tmp_path
+):
+    """Chatwoot can still opt into mid-turn commentary explicitly per platform."""
+    adapter, result = await _run_with_agent(
+        monkeypatch,
+        tmp_path,
+        CommentaryAgent,
+        session_id="sess-chatwoot-commentary-opt-in",
+        platform=Platform("chatwoot"),
+        adapter_cls=NonEditingProgressCaptureAdapter,
+        config_data={
+            "display": {
+                "interim_assistant_messages": False,
+                "platforms": {
+                    "chatwoot": {"interim_assistant_messages": True},
+                },
+            }
+        },
+    )
+
+    assert result.get("already_sent") is not True
+    assert any(call["content"] == "I'll inspect the repo first." for call in adapter.sent)
+
+
+@pytest.mark.asyncio
 async def test_run_agent_tool_progress_does_not_control_interim_commentary(monkeypatch, tmp_path):
     """tool_progress=all with interim_assistant_messages=false should not surface commentary."""
     adapter, result = await _run_with_agent(

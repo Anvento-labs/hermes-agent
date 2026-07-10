@@ -635,6 +635,45 @@ class TestNonConversationalMarker:
         assert out == meta and "non_conversational" not in out
 
 
+class TestChatwootDisplayHygiene:
+    def test_chatwoot_requires_platform_opt_in_for_interim_assistant_messages(self):
+        """Global interim commentary must not leak narration into customer inboxes."""
+        from gateway.run import _resolve_gateway_display_bool
+
+        user_config = {"display": {"interim_assistant_messages": True}}
+
+        assert _resolve_gateway_display_bool(
+            user_config,
+            "chatwoot",
+            "interim_assistant_messages",
+            default=True,
+            platform=Platform("chatwoot"),
+            require_platform_override_for={Platform.MATTERMOST, "chatwoot"},
+        ) is False
+
+    def test_chatwoot_platform_opt_in_can_enable_interim_assistant_messages(self):
+        """Chatwoot can still opt into commentary explicitly per platform."""
+        from gateway.run import _resolve_gateway_display_bool
+
+        user_config = {
+            "display": {
+                "interim_assistant_messages": False,
+                "platforms": {
+                    "chatwoot": {"interim_assistant_messages": True},
+                },
+            }
+        }
+
+        assert _resolve_gateway_display_bool(
+            user_config,
+            "chatwoot",
+            "interim_assistant_messages",
+            default=True,
+            platform=Platform("chatwoot"),
+            require_platform_override_for={Platform.MATTERMOST, "chatwoot"},
+        ) is True
+
+
 # ── redaction ────────────────────────────────────────────────────────────────
 
 

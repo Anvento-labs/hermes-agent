@@ -53,13 +53,22 @@ affected.
 
 ## Final-answer-only delivery (default)
 
-Chatwoot defaults to **final-answer-only** replies
-(`display.platforms.chatwoot.interim_assistant_messages: false`). Customers see
-the completed answer for each turn — not mid-turn narration like "Let me check the
-next page…" while the agent paginates tool results. During long turns the
-**typing indicator** still shows (requires `CHATWOOT_AGENT_TOKEN`).
+Chatwoot defaults to **final-answer-only** replies at the gateway layer. The
+gateway reads raw `config.yaml` and does **not** inherit global
+`display.interim_assistant_messages: true` for Chatwoot — mid-turn narration is
+**off unless you opt in per platform**. Customers see the completed answer for each
+turn, not status like "Let me check the next page…" while the agent paginates tool
+results. During long turns the **typing indicator** still shows (requires
+`CHATWOOT_AGENT_TOKEN`).
 
-To re-enable mid-turn status messages:
+Setting only the global flag does **not** enable narration on Chatwoot:
+
+```yaml
+display:
+  interim_assistant_messages: true  # does NOT affect Chatwoot
+```
+
+To re-enable mid-turn status messages on Chatwoot:
 
 ```yaml
 display:

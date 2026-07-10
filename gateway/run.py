@@ -15868,13 +15868,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 "interim_assistant_messages",
                 default=True,
                 platform=source.platform,
-                require_platform_override_for={Platform.MATTERMOST},
+                require_platform_override_for={Platform.MATTERMOST, "chatwoot"},
             )
         )
         # thinking_progress is independent — if enabled, we need the progress
         # queue even when tool_progress is off (thinking relay uses same infra).
         # Mattermost requires a per-platform opt-in: global scratch-text display
-        # is too easy to leak into busy public threads.
+        # is too easy to leak into busy public threads. Chatwoot is a customer-
+        # facing support widget with no message editing — interim narration must
+        # be opted in explicitly per platform.
         _thinking_enabled = _resolve_gateway_display_bool(
             user_config,
             platform_key,
