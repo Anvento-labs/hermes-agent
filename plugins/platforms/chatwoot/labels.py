@@ -36,8 +36,18 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
     },
     {
         "title": "account-eligibility",
-        "description": "Account status, eligibility, opt-out, scam",
+        "description": "Eligibility to join or qualify for CRWD/gigs",
         "color": "#95a5a6",
+    },
+    {
+        "title": "account-info",
+        "description": "Account status, membership, ban/suspension",
+        "color": "#7f8c8d",
+    },
+    {
+        "title": "scam",
+        "description": "Scam, phishing, or fraud signals",
+        "color": "#e74c3c",
     },
     {
         "title": "app-help",
