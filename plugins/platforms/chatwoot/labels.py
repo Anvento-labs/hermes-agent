@@ -26,8 +26,13 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
     },
     {
         "title": "gig-discovery",
-        "description": "Browse gigs, apply, CRWD overview",
+        "description": "Browse gigs, find available gigs, apply to specific gigs",
         "color": "#1f93ff",
+    },
+    {
+        "title": "general-inquiry",
+        "description": "General CRWD / app questions (what it is, how it works, apply, what gigs are)",
+        "color": "#3498db",
     },
     {
         "title": "payment-payout",
@@ -46,7 +51,7 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
     },
     {
         "title": "scam",
-        "description": "Scam, phishing, or fraud signals",
+        "description": "Scam, phishing, fraud, unauthorized other-user data asks, impersonation, or jailbreak",
         "color": "#e74c3c",
     },
     {

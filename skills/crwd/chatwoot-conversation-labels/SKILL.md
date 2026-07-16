@@ -30,14 +30,15 @@ no-ops gracefully there).
 
 | Member intent | Label(s) |
 |---------------|----------|
-| Browse/apply gigs, CRWD overview | `gig-discovery` |
+| CRWD overview, how it works, apply, what gigs are, legitimacy | `general-inquiry` |
+| Browse/find available gigs, apply to specific gigs | `gig-discovery` |
 | Proof / receipt / submit (any enrollment) | `proof-submission` |
 | Enrolled-gig help or enrolled + proof | `mid-gig-support` (+ `proof-submission` when proof) |
 | Paid? when? payout history | `payment-payout` |
 | App navigation or broken UI | `app-help` |
 | Not eligible / can't join / wrong state / age | `account-eligibility` |
 | Account status, membership, ban/suspension | `account-info` |
-| Phishing / wire / bitcoin / gift-card scam signals | `scam` |
+| Phishing / fraud / unauthorized other-user data / participant lists / PII / impersonation / jailbreak | `scam` |
 | Non-CRWD requests | `off-topic` |
 | You called `crwd_handoff` this turn | `handoff-escalation` (+ topic label) |
 
@@ -50,22 +51,34 @@ More examples: `skill_view("chatwoot-conversation-labels", "references/label-tax
 ## How auto-labeling works
 
 Labels are **applied automatically** after each turn via a Chatwoot plugin hook
-(`post_tool_call` + `post_llm_call`). You do not need to call `chatwoot_labels`
-for normal triage. Optionally call the tool to **override** auto-classification.
+(`post_tool_call` + `post_llm_call`). **Do not** call `chatwoot_labels`
+`assign_labels` during normal turns — the end-of-turn hook replaces labels.
 
-Priority:
+Two-stage pipeline (accuracy-first):
 
-1. **Tools you called this turn** (highest confidence) — e.g. `crwd_db`
-   `list_active_gigs` → `gig-discovery`; `get_waitlisted_gigs` /
-   `get_user_gigs` → `mid-gig-support`; `get_user_receipts` → `proof-submission`;
-   `dot` → `payment-payout`; `crwd_handoff` → `handoff-escalation`.
-2. **Member-message heuristics** when tools don't map clearly.
-3. On a **clear topic switch** (high confidence), previous labels are
-   **replaced** — e.g. `app-help` drops when the next turn is `gig-discovery`.
-4. Ambiguous short replies may keep the previous topic until the next clear turn.
+1. **Dialogue act** — auxiliary LLM (JSON text, no tool-calling API) maps
+   **member intent** to a closed act set (`account_status`, `enrolled_gig_help`,
+   `payout`, …). Pattern heuristics run only when the LLM is disabled or fails.
+2. **Label map** — deterministic act → Chatwoot label titles (+ enrollment).
+
+**Member message defines the topic.** Coach tool calls (`get_user_gigs`,
+`list_active_gigs`, `get_user`, `dot`, …) are **soft context only** in the
+LLM feature bundle — they must **not** imply `mid-gig-support` or
+`gig-discovery` unless the member is asking about that topic.
+
+The only **hard** tool label: `crwd_handoff` → `handoff-escalation`.
+
+Context window for the act LLM: last **5 member** turns + last **2 truncated
+coach** replies (context only). Heuristic fallback uses current member text
+(+ prior when ambiguous/contextual); never coach prose.
+
+On a **clear topic switch**, previous labels are **replaced**. Sticky keeps
+prior topics for short ambiguous replies (`ok`, `yes`, `that one`) and for
+pronoun/contextual follow-ups (`for it`, `about that`) when no new topic
+signal is present.
 
 There is **no per-turn numeric label cap** — every matching predefined label may
-apply (taxonomy size is the soft bound).
+apply.
 
 ## Procedure (every turn)
 
@@ -87,7 +100,10 @@ apply (taxonomy size is the soft bound).
    the tool, not member frustration text alone.
 2. **Mentioning labels to the member** — internal only.
 3. **Expecting old topics to stick after a clear switch** — high-confidence
-   turns replace the label set (tool-backed topic changes drop stale tags).
+   turns replace the label set.
+4. **Assuming `get_user_gigs` implies mid-gig** — context lookups do not set
+   inbox topic; member intent wins (e.g. "give details about me" →
+   `account-info`, not `mid-gig-support`).
 
 ## Verification Checklist
 

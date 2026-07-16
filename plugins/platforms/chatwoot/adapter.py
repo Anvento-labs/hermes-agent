@@ -594,10 +594,11 @@ class ChatwootAdapter(BasePlatformAdapter):
                 return last
         result = last or SendResult(success=True)
         # Customer-visible replies should clear Chatwoot's typing bubble so the
-        # widget composer unlocks.  The gateway refresh loop may still be
-        # running until the handler finishes; explicit off here covers clarify
-        # prompts and multi-chunk delivery races.
+        # widget composer unlocks. Pause the gateway refresh loop first so an
+        # in-flight ``on`` / next tick cannot re-arm Thinking after this ``off``.
         if result.success and not private:
+            if hasattr(self, "pause_typing_for_chat"):
+                self.pause_typing_for_chat(chat_id)
             await self.stop_typing(chat_id)
         return result
 
@@ -737,6 +738,9 @@ class ChatwootAdapter(BasePlatformAdapter):
             # multipart content type + boundary.
             async with self._session.post(url, data=data, headers=self._headers()) as resp:
                 if 200 <= resp.status < 300:
+                    if hasattr(self, "pause_typing_for_chat"):
+                        self.pause_typing_for_chat(chat_id)
+                    await self.stop_typing(chat_id)
                     return SendResult(success=True)
                 detail = await resp.text()
                 return SendResult(
