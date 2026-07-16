@@ -998,7 +998,14 @@ def compute_gig_stage(
     rejection = membership.get("rejectionReason") or membership.get("rejectionNotes")
 
     progress: Dict[str, Any] = {
-        "purchase_confirmed": bool(purchases),
+        # NOT a purchase confirmation. A user_product_purchases row is written when
+        # the member is *approved to join* (every row in the data is
+        # source: "join_approved", and purchasedAt is just createdAt on most of
+        # them) -- it records which product they may buy and the buy link, not that
+        # they bought anything. Naming it purchase_confirmed made the coach tell a
+        # member "the system registered that you ordered the product" when the
+        # system had registered no such thing.
+        "product_assigned": bool(purchases),
         "receipt_submitted": False,
         "receipt_approved": False,
         "review_submitted": False,
@@ -1042,15 +1049,15 @@ def compute_gig_stage(
             "handoff_recommended": False,
         }
 
-    progress["purchase_confirmed"] = True
+    progress["product_assigned"] = True
 
     if gig_type == "irl":
         if not store_orders:
             return {
                 "stage": "need_receipt",
                 "next_step": (
-                    f"For {gig_name}, visit the store, buy the product, then upload "
-                    "your receipt in the app."
+                    f"For {gig_name}, visit the store, buy the product, then send "
+                    "your receipt right here in the chat."
                 ),
                 "progress": progress,
                 "buy_link": buy_link,
@@ -1090,8 +1097,8 @@ def compute_gig_stage(
             return {
                 "stage": "need_review",
                 "next_step": (
-                    f"Receipt approved for {gig_name}! Next: post your review/UGC "
-                    "and submit the links in the app."
+                    f"Receipt approved for {gig_name}! Next: post your review, then "
+                    "send it here in the chat."
                 ),
                 "progress": progress,
                 "buy_link": buy_link,
@@ -1134,8 +1141,8 @@ def compute_gig_stage(
             return {
                 "stage": "need_receipt",
                 "next_step": (
-                    f"For {gig_name}, order the product, then upload your order "
-                    "receipt screenshot in the app."
+                    f"For {gig_name}, order the product, then send your order "
+                    "receipt screenshot right here in the chat."
                 ),
                 "progress": progress,
                 "buy_link": buy_link,
@@ -1161,8 +1168,8 @@ def compute_gig_stage(
             return {
                 "stage": "need_review",
                 "next_step": (
-                    f"Order approved for {gig_name}! Leave your review, then upload "
-                    "the order + review screenshots in the app."
+                    f"Order approved for {gig_name}! Leave your review, then send "
+                    "the review screenshot here in the chat."
                 ),
                 "progress": progress,
                 "buy_link": buy_link,
@@ -2256,7 +2263,11 @@ CRWD_DB_SCHEMA = {
         "get_waitlisted_gigs returns gigs the member applied for but is not "
         "yet accepted into (isAccepted false / pending approval). "
         "get_user_gig_status returns per-gig stage and personalized next_step "
-        "from membership + proof progress. "
+        "from membership + proof progress. In its progress dict, product_assigned "
+        "means the member was approved and given a buy link — it is NOT evidence "
+        "they bought anything, so never tell a member their purchase is confirmed "
+        "or that we registered their order. Proof is submitted in this chat, never "
+        "in the CRWD app. "
         "Proof submissions (used by the crwd-proof-validator skill): "
         "check_duplicate_proof asks whether a proof id is already claimed — pass "
         "user_id AND crwd_id, because a proof id names a purchase, not a submission: "
