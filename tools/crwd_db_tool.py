@@ -294,7 +294,7 @@ _GIG_FIELDS = {
     "name": 1, "description": 1, "gig_type": 1, "payout": 1, "price": 1,
     "gig_stores": 1, "start_date": 1, "end_date": 1, "type_of_work_proof": 1,
     "status": 1, "address": 1, "city": 1, "state": 1, "postal_code": 1,
-    "image": 1, "isDeleted": 1,
+    "image": 1, "isDeleted": 1, "isArchived": 1,
 }
 _MEMBER_FIELDS = {
     "member": 1, "user_id": 1, "worker_id": 1, "crwd_id": 1, "status": 1,
@@ -420,9 +420,16 @@ def _now():
 
 
 def _open_gig_filter() -> Dict[str, Any]:
-    """Filter for currently-open gigs: not deleted, Active, end_date in future."""
+    """Filter for currently-open gigs: not deleted, not archived, Active, end_date in future.
+
+    ``isArchived`` matters as much as ``status``: the app hides archived gigs, and
+    real archived rows still carry status "Active" with a future end_date. Without
+    this the coach listed an archived gig a member was never enrolled in as one of
+    "your active gigs" -- while the app showed one gig and the coach said three.
+    """
     return {
         "isDeleted": {"$ne": True},
+        "isArchived": {"$ne": True},
         "status": {"$regex": r"^active$", "$options": "i"},
         "end_date": {"$gte": _now()},
     }
@@ -478,6 +485,10 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
         "description": gig.get("description"),
         "gig_type": gig.get("gig_type"),
         "status": gig.get("status"),
+        # Archived gigs are hidden from every listing; they only reach the model
+        # via a direct get_gig_details lookup, and this flag is how it can say
+        # "that gig is no longer active" instead of presenting it as live.
+        "is_archived": bool(gig.get("isArchived")),
         "start_date": gig.get("start_date"),
         "end_date": gig.get("end_date"),
         "effective_payout": _effective_payout(gig),
@@ -754,7 +765,10 @@ def _get_waitlisted_gigs(user_id: str, limit: int = 10) -> str:
     gigs_by_id = {}
     if crwd_ids:
         for gig in _db()[_COLL_CRWDS].find(
-            {"_id": {"$in": crwd_ids}}, _GIG_FIELDS, max_time_ms=_MAX_TIME_MS
+            # Archived gigs are invisible in the app; a membership pointing at one
+            # is not an active gig and must not be presented as one.
+            {"_id": {"$in": crwd_ids}, "isArchived": {"$ne": True}},
+            _GIG_FIELDS, max_time_ms=_MAX_TIME_MS,
         ):
             gigs_by_id[str(gig["_id"])] = _slim_gig(gig)
 
@@ -784,16 +798,24 @@ def _get_user_gigs(user_id: str, limit: int = 10) -> str:
     gigs_by_id = {}
     if crwd_ids:
         for gig in _db()[_COLL_CRWDS].find(
-            {"_id": {"$in": crwd_ids}}, _GIG_FIELDS, max_time_ms=_MAX_TIME_MS
+            # Archived gigs are invisible in the app; a membership pointing at one
+            # is not an active gig and must not be presented as one.
+            {"_id": {"$in": crwd_ids}, "isArchived": {"$ne": True}},
+            _GIG_FIELDS, max_time_ms=_MAX_TIME_MS,
         ):
             gigs_by_id[str(gig["_id"])] = _slim_gig(gig)
 
     members = _sort_members_by_gig_end_date(members, gigs_by_id)[:row_limit]
     items = []
     for m in members:
+        gig = gigs_by_id.get(str(m.get("crwd_id")))
+        if not gig:
+            # Gig archived (excluded from the join above) or gone -- the app's
+            # Active tab doesn't show it, so neither do we.
+            continue
         items.append({
             "membership": _serialize_doc(m),
-            "gig": gigs_by_id.get(str(m.get("crwd_id"))),
+            "gig": gig,
         })
     return json.dumps(
         {"_type": "user_gigs", "items": items, "error": None}, ensure_ascii=False
@@ -1357,7 +1379,11 @@ def build_user_gig_status(
     gigs_by_id: Dict[str, Dict[str, Any]] = {}
     if crwd_ids:
         for gig in db[_COLL_CRWDS].find(
-            {"_id": {"$in": crwd_ids}}, _GIG_FIELDS, max_time_ms=_MAX_TIME_MS
+            # Same archived exclusion as the joins above: the status loop below
+            # skips memberships whose gig is absent, which is exactly the app's
+            # Active-tab behaviour.
+            {"_id": {"$in": crwd_ids}, "isArchived": {"$ne": True}},
+            _GIG_FIELDS, max_time_ms=_MAX_TIME_MS,
         ):
             gigs_by_id[str(gig["_id"])] = gig
 

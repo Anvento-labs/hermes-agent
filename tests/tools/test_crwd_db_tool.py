@@ -1724,3 +1724,58 @@ class TestGetUserProofs:
 
     def test_action_is_registered_in_the_schema(self):
         assert "get_user_proofs" in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+
+
+class TestArchivedGigsAreInvisible:
+    """The app hides archived gigs, and real archived rows still carry
+    status "Active" with a future end_date -- so isArchived is load-bearing.
+    Without it the coach told a member they had 3 active gigs while the app
+    showed 1, including a gig they were never enrolled in."""
+
+    def test_open_gig_filter_excludes_archived(self):
+        f = t._open_gig_filter()
+        assert f["isArchived"] == {"$ne": True}
+
+    def test_status_skips_membership_whose_gig_is_archived(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        live_id = t._oid("69b8614f1083b9302fd0a9a7")
+        members = MagicMock()
+        members.find.return_value = [
+            {"member": "user-a", "crwd_id": live_id, "isAccepted": True},
+            {"member": "user-a", "crwd_id": t._oid("6a54f6d3a64282067a333a6b"),
+             "isAccepted": True},
+        ]
+        crwds = MagicMock()
+        # The join itself excludes archived rows -- only the live gig comes back.
+        crwds.find.return_value = [
+            {"_id": live_id, "name": "Live Gig", "gig_type": "web_based"},
+        ]
+        empty = MagicMock()
+        # Progress collections are queried as find().sort().limit() -> iterable.
+        empty.find.return_value.sort.return_value.limit.return_value = []
+        db = _fake_db({
+            "added_crwd_members": members, "crwds": crwds,
+            "user_product_purchases": empty, "gig_store_orders": empty,
+            "gig_product_reviews": empty, "order_receipt_reviews": empty,
+        })
+        db.list_collection_names = MagicMock(return_value=[])
+        with patch.object(t, "_db", return_value=db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user_gig_status", "user_id": "user-a"}))
+        assert out["count"] == 1
+        # And the join was asked to exclude archived gigs.
+        assert crwds.find.call_args[0][0]["isArchived"] == {"$ne": True}
+
+    def test_get_user_gigs_drops_archived_instead_of_emitting_gig_none(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        members.find.return_value.limit.return_value = [
+            {"member": "user-a", "crwd_id": t._oid("6a54f6d3a64282067a333a6b")},
+        ]
+        crwds = MagicMock()
+        crwds.find.return_value = []  # its gig is archived -> excluded by the join
+        db = _fake_db({"added_crwd_members": members, "crwds": crwds})
+        with patch.object(t, "_db", return_value=db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user_gigs", "user_id": "user-a"}))
+        assert out["items"] == []
