@@ -1646,3 +1646,81 @@ class TestMarkProofRiskScored:
                 "action": "mark_proof_risk_scored",
                 "proof_record_id": "69b8614f1083b9302fd0a9a7"}))
         assert "error" in out and out["error"]
+
+
+class TestGetUserProofs:
+    """The member-centric read. find_proof is keyed on a proof id, so it answers
+    "who else touched this purchase" -- not "what have I submitted?", which is what
+    a coach is actually asked. Without this the agent asked a member for an order
+    number it had already stored five times."""
+
+    def _db_with(self, rows):
+        coll = MagicMock()
+        coll.find.return_value.sort.return_value.limit.return_value = rows
+        return coll, _fake_db({"proof_submissions": coll})
+
+    def test_returns_everything_for_a_member(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll, db = self._db_with([_proof_doc(), _proof_doc(status="rejected")])
+        with patch.object(t, "_db", return_value=db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user_proofs", "user_id": "user-a"}))
+        assert out["_type"] == "crwd_user_proofs"
+        assert out["count"] == 2
+        # No proof_id needed -- that was the whole bug.
+        assert coll.find.call_args[0][0] == {"user_id": "user-a"}
+
+    def test_narrows_to_one_gig(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll, db = self._db_with([_proof_doc()])
+        with patch.object(t, "_db", return_value=db):
+            t.crwd_db_tool({
+                "action": "get_user_proofs", "user_id": "user-a", "crwd_id": "gig-1"})
+        assert coll.find.call_args[0][0] == {"user_id": "user-a", "crwd_id": "gig-1"}
+
+    def test_gig_id_is_accepted_as_an_alias(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll, db = self._db_with([])
+        with patch.object(t, "_db", return_value=db):
+            t.crwd_db_tool({
+                "action": "get_user_proofs", "user_id": "user-a", "gig_id": "gig-1"})
+        assert coll.find.call_args[0][0]["crwd_id"] == "gig-1"
+
+    def test_status_filter(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll, db = self._db_with([_proof_doc()])
+        with patch.object(t, "_db", return_value=db):
+            t.crwd_db_tool({
+                "action": "get_user_proofs", "user_id": "user-a", "status": "accepted"})
+        assert coll.find.call_args[0][0]["status"] == "accepted"
+
+    def test_newest_first_and_capped(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll, db = self._db_with([])
+        with patch.object(t, "_db", return_value=db):
+            t.crwd_db_tool({
+                "action": "get_user_proofs", "user_id": "user-a", "limit": 500})
+        coll.find.return_value.sort.assert_called_with("created_at", -1)
+        coll.find.return_value.sort.return_value.limit.assert_called_with(t._HARD_LIMIT)
+
+    def test_no_proofs_is_an_honest_empty_not_an_error(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll, db = self._db_with([])
+        with patch.object(t, "_db", return_value=db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user_proofs", "user_id": "user-a"}))
+        assert out["items"] == [] and out["count"] == 0 and out["error"] is None
+
+    def test_requires_user_id(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        out = json.loads(t.crwd_db_tool({"action": "get_user_proofs", "user_id": ""}))
+        assert "error" in out and out["error"]
+
+    def test_invalid_status_refused(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        out = json.loads(t.crwd_db_tool({
+            "action": "get_user_proofs", "user_id": "user-a", "status": "approved"}))
+        assert "error" in out and out["error"]
+
+    def test_action_is_registered_in_the_schema(self):
+        assert "get_user_proofs" in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]

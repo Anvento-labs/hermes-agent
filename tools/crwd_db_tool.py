@@ -1932,6 +1932,44 @@ def _check_duplicate_proof(
     )
 
 
+def _get_user_proofs(
+    user_id: str, crwd_id: str = "", status: str = "", limit: int = 10
+) -> str:
+    """Everything this member has submitted -- optionally just for one gig.
+
+    The member-centric read. ``find_proof`` is keyed on a proof id, which answers
+    "who else touched this purchase"; it cannot answer "what have I submitted?" --
+    the question a coach is actually asked. Without this the agent had to ask the
+    member for an order number it had already stored.
+    """
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return tool_error("user_id is required for get_user_proofs")
+    query: Dict[str, Any] = {"user_id": user_id}
+    if crwd_id:
+        query["crwd_id"] = str(crwd_id).strip()
+    if status:
+        status = status.strip().lower()
+        if status not in _PROOF_STATUSES:
+            return tool_error(f"status must be one of: {', '.join(sorted(_PROOF_STATUSES))}")
+        query["status"] = status
+    row_limit = max(1, min(int(limit or 10), _HARD_LIMIT))
+    cursor = (
+        _db()[_COLL_PROOFS]
+        .find(query, max_time_ms=_MAX_TIME_MS)
+        .sort("created_at", -1)
+        .limit(row_limit)
+    )
+    items = _serialize_docs(list(cursor))
+    return json.dumps(
+        {
+            "_type": "crwd_user_proofs", "items": items, "count": len(items),
+            "error": None,
+        },
+        ensure_ascii=False, default=str,
+    )
+
+
 def _find_proof(
     proof_id: str, proof_type: str = "", user_id: str = "", limit: int = 10
 ) -> str:
@@ -2196,6 +2234,13 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 user_id=args.get("user_id", ""),
                 crwd_id=args.get("crwd_id", "") or args.get("gig_id", ""),
             )
+        if action == "get_user_proofs":
+            return _get_user_proofs(
+                user_id=args.get("user_id", ""),
+                crwd_id=args.get("crwd_id", "") or args.get("gig_id", ""),
+                status=args.get("status", ""),
+                limit=args.get("limit", 10),
+            )
         if action == "check_gig_proof_completion":
             return _check_gig_proof_completion(
                 user_id=args.get("user_id", ""),
@@ -2221,8 +2266,8 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
             "Unknown action. Use: list_active_gigs, get_gig_details, get_user, "
             "get_user_gigs, get_user_gig_history, get_waitlisted_gigs, get_user_gig_status, "
             "get_user_products, get_user_receipts, get_user_notifications, "
-            "store_proof, check_duplicate_proof, find_proof, check_gig_proof_completion, "
-            "mark_proof_risk_scored, custom_query"
+            "store_proof, get_user_proofs, check_duplicate_proof, find_proof, "
+            "check_gig_proof_completion, mark_proof_risk_scored, custom_query"
         )
     except RuntimeError as exc:
         # Config/connection problems -- safe to surface the short message.
@@ -2269,6 +2314,9 @@ CRWD_DB_SCHEMA = {
         "or that we registered their order. Proof is submitted in this chat, never "
         "in the CRWD app. "
         "Proof submissions (used by the crwd-proof-validator skill): "
+        "get_user_proofs(user_id[, crwd_id][, status]) is what a member has actually "
+        "submitted — use it for 'what have I sent?' / 'did my receipt go through?', "
+        "and never ask a member for an order number to look up their own proof. "
         "check_duplicate_proof asks whether a proof id is already claimed — pass "
         "user_id AND crwd_id, because a proof id names a purchase, not a submission: "
         "the same member may back one gig with several artifacts of the same purchase "
@@ -2294,9 +2342,9 @@ CRWD_DB_SCHEMA = {
                     "get_user_gig_status",
                     "get_user_products",
                     "get_user_receipts", "get_user_notifications",
-                    "store_proof", "check_duplicate_proof", "find_proof",
-                    "check_gig_proof_completion", "mark_proof_risk_scored",
-                    "custom_query",
+                    "store_proof", "get_user_proofs", "check_duplicate_proof",
+                    "find_proof", "check_gig_proof_completion",
+                    "mark_proof_risk_scored", "custom_query",
                 ],
             },
             "limit": {"type": "integer", "description": "max rows per page (capped at 20; list_active_gigs default 5; get_user_gig_status default 20)"},
@@ -2380,7 +2428,10 @@ CRWD_DB_SCHEMA = {
             "status": {
                 "type": "string",
                 "enum": ["accepted", "rejected", "needs_human"],
-                "description": "Verdict for this proof (store_proof)",
+                "description": (
+                    "Verdict for this proof (store_proof); optional filter for "
+                    "get_user_proofs"
+                ),
             },
             "reason_code": {
                 "type": "string",

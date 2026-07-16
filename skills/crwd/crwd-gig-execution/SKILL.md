@@ -81,8 +81,11 @@ skill (proof is just the tail of doing the gig).
    - Two-purchase gigs (two different payment methods) need **both** receipts, on genuinely
      different payment methods.
    - Full detail: `skill_view("crwd-reference", "references/proof-requirements.md")`.
-7. **Check submission status** if they ask "did it go through?" — `get_user_receipts` shows
-   receipt/proof validation state (pass/fail + reason).
+7. **Check submission status** if they ask "did it go through?" / "what have I sent?" —
+   `get_user_proofs(user_id[, crwd_id])` is what they submitted **in this chat** and how it
+   was judged. **Never ask them for an order number to find their own proof.**
+   `get_user_receipts` shows the app's own receipt pipeline, which is a separate record —
+   a member can have proof in one and not the other.
 8. **If a submission is rejected → hand off** (`crwd-handoff`). Do not guess the rejection
    reason or coach a resubmission yourself — that's a human's job.
 
