@@ -17,6 +17,10 @@
 # ssm send-command; the source and config travel as short-lived S3 presigned
 # URLs, so the instance needs no S3 permission of its own.
 #
+# Staging config is ~/.hermes-staging (CONFIG_DIR), NOT ~/.hermes. The local
+# ~/.hermes runs a live gateway on a different Chatwoot bot and is never read
+# from or written to by this script.
+#
 # Prerequisite you must do once (it grants Bedrock access to the box; the
 # gateway starts without it but fails on the first message):
 #
@@ -31,6 +35,11 @@ set -euo pipefail
 
 INSTANCE_ID="${INSTANCE_ID:-i-0fd88a62ed130dcdb}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
+# Staging config lives HERE, not in ~/.hermes. The local ~/.hermes runs a live
+# gateway against a different Chatwoot bot; the two are meant to diverge, so
+# this script must never read staging values out of it or write anything into
+# it. Seed this dir once (see preflight), then edit it for staging only.
+CONFIG_DIR="${CONFIG_DIR:-$HOME/.hermes-staging}"
 S3_BUCKET="${S3_BUCKET:-cdk-hnb659fds-assets-079110101908-us-east-2}"
 S3_PREFIX="${S3_PREFIX:-hermes-deploy}"
 APP_DIR="${APP_DIR:-/opt/hermes-agent}"
@@ -101,9 +110,18 @@ say "Preflight"
 cd "$(dirname "$0")/.."
 command -v jq >/dev/null || die "jq is required"
 [ -f pyproject.toml ] || die "not at the repo root"
-[ -f "$HOME/.hermes/.env" ] || die "~/.hermes/.env not found"
-[ -f "$HOME/.hermes/config.yaml" ] || die "~/.hermes/config.yaml not found"
 aws sts get-caller-identity >/dev/null 2>&1 || die "no working AWS credentials"
+
+if [ ! -f "$CONFIG_DIR/.env" ] || [ ! -f "$CONFIG_DIR/config.yaml" ]; then
+  die "$CONFIG_DIR/{.env,config.yaml} not found.
+Seed it once from your local config, then edit it for staging:
+
+  mkdir -p $CONFIG_DIR
+  cp ~/.hermes/.env ~/.hermes/config.yaml $CONFIG_DIR/
+
+Then set the staging values in $CONFIG_DIR/.env (CHATWOOT_TOKEN for the
+staging bot, CHATWOOT_WEBHOOK_SECRET, etc). ~/.hermes is never written to."
+fi
 
 # Bedrock is what the gateway answers with; warn early if the role can't call it.
 if ! aws iam get-role-policy --role-name icrwd-chatwoot-ec2-staging \
@@ -117,11 +135,11 @@ GIT_SHA="$(git rev-parse --short HEAD)"
 echo "instance=$INSTANCE_ID  sha=$GIT_SHA  extras=$EXTRAS"
 
 # --- package + upload ------------------------------------------------------
-say "Packaging config"
+say "Packaging config from $CONFIG_DIR"
 # .env and config.yaml only — never skills/. They self-seed from the repo on
 # startup, and sync_skills() skips anything it reads as user-modified, so
 # shipping a local skills/ would pin staging to local versions.
-tar -czf "$TMPDIR_LOCAL/config.tar.gz" -C "$HOME/.hermes" .env config.yaml
+tar -czf "$TMPDIR_LOCAL/config.tar.gz" -C "$CONFIG_DIR" .env config.yaml
 aws s3 cp --quiet "$TMPDIR_LOCAL/config.tar.gz" "s3://${S3_BUCKET}/${S3_PREFIX}/config.tar.gz"
 UPLOADED=1
 CONFIG_URL="$(aws s3 presign "s3://${S3_BUCKET}/${S3_PREFIX}/config.tar.gz" \
