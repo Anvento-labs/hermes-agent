@@ -25,6 +25,11 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
         "color": "#27ae60",
     },
     {
+        "title": "gig-complete",
+        "description": "Every proof the gig requires has been accepted",
+        "color": "#16a085",
+    },
+    {
         "title": "gig-discovery",
         "description": "Browse gigs, apply, CRWD overview",
         "color": "#1f93ff",

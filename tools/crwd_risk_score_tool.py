@@ -3,9 +3,15 @@
 Registers a single LLM-callable tool ``crwd_risk_score`` (gated on Chatwoot
 creds) that reads the current member's ``risk_score`` custom attribute, adds a
 signed ``delta``, clamps the result to ``0..100``, and writes it back. The
-``crwd-proof-validator`` skill decides *how many points* a submission is worth
-(duplicate receipt, wrong product, fake receipt, etc.) and calls this tool to
-persist the score; this tool only owns the deterministic read-merge-write.
+``crwd-risk-analyser`` skill decides *how many points* a verdict is worth
+(duplicate receipt, wrong product, fake receipt, scam signals, ...) and calls this
+tool to persist the score; this tool only owns the deterministic read-merge-write.
+``crwd-proof-validator`` records the verdict and never scores it.
+
+Note for callers: this stores a **scalar only**. There is no history, no audit
+trail, and no read-without-write -- so a double-score is silent and permanent.
+``crwd-risk-analyser`` guards against that with the ``risk_scored`` flag on
+``proof_submissions``.
 
 Self-contained by design, like ``crwd_handoff``: it resolves the current
 Chatwoot account + contact from the gateway session context and calls the
@@ -222,13 +228,15 @@ CRWD_RISK_SCORE_SCHEMA = {
     "name": "crwd_risk_score",
     "description": (
         "Adjust the CURRENT CRWD member's risk score (a 0-100 Chatwoot contact "
-        "attribute) by adding a signed point `delta`. Use when a proof/receipt "
-        "submission matches a risk scenario (duplicate receipt, wrong product, "
-        "wrong quantity, fake/edited receipt, repeated validation failures) — see "
-        "the crwd-proof-validator skill for the point values. Reads the current "
-        "score, adds `delta`, and clamps to 0-100 (it does NOT set an absolute "
-        "value). Safe to call even outside Chatwoot: it no-ops and reports that "
-        "nothing was updated. Do not mention the risk score to the member."
+        "attribute) by adding a signed point `delta`. Owned by the "
+        "crwd-risk-analyser skill — load it for the point values and escalation "
+        "tiers, and do not invent a delta. crwd-proof-validator records proof "
+        "verdicts and must never call this. Reads the current score, adds `delta`, "
+        "and clamps to 0-100 (it does NOT set an absolute value). Returns the "
+        "resulting `new_score`, which is the only way to read the score — there is "
+        "no read action, and `delta=0` still costs a write. Safe to call even "
+        "outside Chatwoot: it no-ops and reports that nothing was updated. Do not "
+        "mention the risk score to the member."
     ),
     "parameters": {
         "type": "object",

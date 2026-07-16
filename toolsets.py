@@ -258,8 +258,14 @@ TOOLSETS = {
     },
 
     "crwd": {
-        "description": "CRWD MongoDB lookups: gigs, users, membership (gated on CRWD_MONGO_URI); plus crwd_handoff to loop in a human and crwd_risk_score to adjust a member's risk score (both gated on Chatwoot creds) and dot transfers lookup (gated on DOTS_CLIENT_ID / DOTS_API_KEY)",
-        "tools": ["crwd_db", "crwd_handoff", "crwd_risk_score"],
+        "description": "CRWD MongoDB lookups: gigs, users, membership; plus proof-submission storage and duplicate checking (all gated on CRWD_MONGO_URI); plus crwd_handoff to loop in a human and crwd_risk_score to adjust a member's risk score (both gated on Chatwoot creds); image metadata extract for camera receipts / screenshots; and dot transfers lookup (gated on DOTS_CLIENT_ID / DOTS_API_KEY)",
+        "tools": [
+            "crwd_db",
+            "crwd_handoff",
+            "crwd_risk_score",
+            "crwd_verify_camera_receipt",
+            "crwd_verify_screenshot",
+        ],
         "includes": ["dot"],
     },
 

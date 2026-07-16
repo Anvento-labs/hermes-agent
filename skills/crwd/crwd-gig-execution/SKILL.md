@@ -33,8 +33,9 @@ skill (proof is just the tail of doing the gig).
    the member asks about gigs they are in. Re-call with `gig_name` or `crwd_id` when they
    name a specific gig.
 1. **Confirm the gig and its type** (live `irl` vs online) with `crwd_db` `get_gig_details`.
-   If it's cleanly neither, go by the gig's real `type_of_work_proof`/requirements rather than
-   forcing it into one bucket — and hand off if what's required is unclear.
+   The type tells you where they shop, not what to submit — the store `requirements` flags do
+   that (step 6). Don't use `type_of_work_proof`; it is unset on nearly every gig. Hand off if
+   what's required is unclear.
 2. **Paste linked `name` / `gig_name` verbatim.** `get_gig_details` and `get_user_gig_status`
    return those as `[Title](…/my-gigs/<_id>)`. Copy the field as-is so the title is clickable — do **not** also append a bare URL. Full
    detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
@@ -52,17 +53,29 @@ skill (proof is just the tail of doing the gig).
 4. **Live gig steps:** go to the store (see `crwd-gig-discovery` if they need to find it),
    buy the product, and **call out any special requirement precisely** — e.g. *two purchases
    with two different payment methods* means two separate transactions and two receipts.
-   Then create the content: a natural, non-scripted UGC video/photo showing the product
-   clearly, matching the gig's "approved concepts."
+   Then do whatever **this gig's `requirements`** actually ask for (step 6): most live gigs
+   want a review; only a few want UGC. Only send them off to film a natural, non-scripted
+   video/photo showing the product when `requires_ugc_post` is true — don't ask for content
+   the gig never wanted.
 5. **Online gig steps:** order the product (commonly Amazon) via the buy link, then leave a
-   review per the gig's instructions.
-6. **Proof — tell them the exact format AND where it goes** so it isn't rejected.
+   review per the gig's instructions — including a star rating when `requires_review_rating`
+   is set, and keep the review link when `requires_review_link` is set.
+6. **Proof — look up what THIS gig requires, then tell them exactly that.**
    Proof is submitted by uploading it **right here in this chat as a message/attachment** —
    not in the CRWD app. Send them here to `crwd-proof-validator`, which owns the reply to a
    submission.
-   - Live: receipt photo (readable, showing the product), store location, and the UGC content
-     link. Both receipts if there's a two-purchase requirement.
-   - Online: order screenshot + review screenshot (and the review link).
+   - **Read the gig's `requirements`** from `get_gig_details(query=<gig>, full=true)` — each
+     store carries `requires_receipt`, `requires_order_id`, `requires_review_receipt`,
+     `requires_review_link`, `requires_review_rating`, `requires_store_address`,
+     `requires_ugc_post`. **Name exactly the ones set to `true`** — nothing more, nothing less.
+   - **Never recite a proof list from the gig type.** Requirements are per store and vary
+     within a type. `crwd-proof-validator` checks the submission against these same flags, so
+     a generic list gets the member rejected for "missing required deliverables" — the biggest
+     proof rejection reason there is. In particular, do **not** ask for a UGC link unless
+     `requires_ugc_post` is true, and do **not** forget the review link when
+     `requires_review_link` is true.
+   - Two-purchase gigs (two different payment methods) need **both** receipts, on genuinely
+     different payment methods.
    - Full detail: `skill_view("crwd-reference", "references/proof-requirements.md")`.
 7. **Check submission status** if they ask "did it go through?" — `get_user_receipts` shows
    receipt/proof validation state (pass/fail + reason).

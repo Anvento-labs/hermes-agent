@@ -124,6 +124,10 @@ dependencies = [
   # install rather than gating it behind an extra + a mid-session lazy install
   # (which deadlocked the CLI under prompt_toolkit — see #40490).
   "Pillow==12.2.0",
+  # HEIC/HEIF decode for CRWD receipt metadata tools (and optional vision
+  # transcode). pillow-heif registers a Pillow opener; pin with an upper bound
+  # per dependency policy.
+  "pillow-heif>=1.4.0,<2",
   # Windows log rotation. Stdlib ``RotatingFileHandler.doRollover()`` uses
   # ``os.rename()`` which fails with ``PermissionError [WinError 32]`` on
   # Windows whenever any other process holds an append-mode handle on

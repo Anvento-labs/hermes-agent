@@ -95,8 +95,13 @@ class TestCreateLabelsIfNotExists:
         with patch.object(t, "_api_request", side_effect=fake_api):
             out = t._create_labels_if_not_exists("1")
 
+        # Derive the count from the constant: hardcoding it went stale the last
+        # time a label was added, and the assertion silently drifted.
+        from plugins.platforms.chatwoot.labels import PREDEFINED_LABEL_TITLES
+
         assert "gig-discovery" not in out["created"]
-        assert len(out["created"]) == 6  # 7 predefined minus gig-discovery
+        assert len(out["created"]) == len(PREDEFINED_LABEL_TITLES) - 1
+        assert set(out["created"]) == set(PREDEFINED_LABEL_TITLES) - {"gig-discovery"}
 
     def test_get_failure(self, chatwoot_env):
         with patch.object(t, "_api_request", return_value=(False, None, "HTTP 401")):

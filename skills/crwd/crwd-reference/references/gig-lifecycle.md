@@ -18,24 +18,33 @@ Every member goes through the same flow:
 - Member goes to a physical store (often Walmart or Target), finds the product, buys it —
   sometimes with a specific requirement like "two purchases with two different payment
   methods."
-- Member creates content per the gig's "approved concepts" (a natural, relatable,
-  non-scripted UGC video or photo showing the product clearly).
-- Proof: photo of the receipt, the store location, and a link to the UGC/content.
+- What they do next, and what they submit, is whatever that gig's `requirements` say. Most
+  live gigs want a receipt and a review; only a few want UGC content.
 
 **Online gigs:**
-- Member orders the product (commonly via Amazon), leaves a review, and submits order +
-  review screenshots.
+- Member orders the product (commonly via Amazon) and leaves a review. Most online gigs want
+  a receipt, the order id, a review screenshot, a review link, and a rating — but again, read
+  the gig.
 - Payment process starts once that proof is submitted and verified.
+
+**Proof is per gig, never per gig type.** Requirements live on each store as `requires_*`
+flags (`get_gig_details(..., full=true)`) and vary widely within a type. Reciting a gig-type
+list is how members end up rejected for "missing required deliverables" — the biggest proof
+rejection reason in the data. See
+`skill_view("crwd-reference", "references/proof-requirements.md")`.
 
 Every gig has a **payout**, a **deadline**, and an **estimated time to complete**. Be precise
 about these when asked, and never guess if you don't have the real numbers in front of you —
 look them up with `crwd_db`.
 
-**Live (`gig_type: "irl"`) and online are the two types in the data.** If a gig doesn't fit
-either cleanly — a sampling run, a foot-traffic activation, or anything with unusual
-requirements — don't force it into the wrong bucket. Describe it from its **actual** data
-(payout, `type_of_work_proof`, source, requirements) and, if what's being asked for is
+**Live (`gig_type: "irl"`) and online (`web_based`) are the two types in the data.** If a gig
+doesn't fit either cleanly — a sampling run, a foot-traffic activation, or anything with
+unusual requirements — don't force it into the wrong bucket. Describe it from its **actual**
+data (payout, source, and the store `requirements` flags) and, if what's being asked for is
 genuinely unclear, hand off rather than guess (`crwd-handoff`).
+
+Don't reach for `type_of_work_proof` — it is unset on nearly every gig. The `requirements`
+flags are the proof spec.
 
 ## Gig link
 
