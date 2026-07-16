@@ -59,7 +59,10 @@ skill (proof is just the tail of doing the gig).
    the gig never wanted.
 5. **Online gig steps:** order the product (commonly Amazon) via the buy link, then leave a
    review per the gig's instructions — including a star rating when `requires_review_rating`
-   is set, and keep the review link when `requires_review_link` is set.
+   is set. When `requires_review_link` is set, ask them for a **screenshot of the review**,
+   never a link: no store gives a review a usable URL (Target's is the product page,
+   Amazon's needs a login), so a link cannot be accepted and asking for one strands them.
+   Tell them what the shot needs: **the product, their username, the date, and the review**.
 6. **Proof — look up what THIS gig requires, then tell them exactly that.**
    Proof is submitted by uploading it **right here in this chat as a message/attachment** —
    not in the CRWD app. Send them here to `crwd-proof-validator`, which owns the reply to a
@@ -72,8 +75,9 @@ skill (proof is just the tail of doing the gig).
      within a type. `crwd-proof-validator` checks the submission against these same flags, so
      a generic list gets the member rejected for "missing required deliverables" — the biggest
      proof rejection reason there is. In particular, do **not** ask for a UGC link unless
-     `requires_ugc_post` is true, and do **not** forget the review link when
-     `requires_review_link` is true.
+     `requires_ugc_post` is true, and do **not** forget the review when
+     `requires_review_link` is true — asking for it as a **screenshot**, since the flag's
+     name is legacy and a link is never accepted.
    - Two-purchase gigs (two different payment methods) need **both** receipts, on genuinely
      different payment methods.
    - Full detail: `skill_view("crwd-reference", "references/proof-requirements.md")`.

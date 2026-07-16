@@ -78,10 +78,11 @@ offence, `2` the second, and so on. `count` is not capped.
 | `wrong_quantity` | 0 | 0..15 | 0..15 | Usually sold out. First time is free |
 | `invalid_order_number` | 0..15 | 0..15 | 0..15 | Typed a number that isn't a real order |
 | `suspected_edited` | +85..95 | +85..95 | +85..95 | Forgery. Critical on the first offence — no ramp |
+| `date_outside_gig_window` | +20 | +20 | +20 | Purchase or post dated outside the gig window |
 
 **Everything else scores 0.** `clean_match`, `gig_not_active_for_user`,
 `incomplete_submission`, `unreadable`, `no_identifier`, `link_unreachable`,
-`date_outside_gig_window`, `content_mismatch`, `link_not_owned`, `wrong_proof_type`
+`content_mismatch`, `link_not_owned`, `wrong_proof_type`
 are mechanics and coaching cases, not fraud. **Do not invent a delta for them.** A
 member whose photo was blurry is not a risk.
 

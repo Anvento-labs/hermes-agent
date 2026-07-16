@@ -2,19 +2,18 @@
 
 Connect an [Chatwoot](https://www.chatwoot.com/) Agent Bot to Hermes so that a
 customer messaging a connected inbox is talking to your agent. Each Chatwoot
-conversation maps to its own agent session; the bot stays silent when a human
-agent takes over.
+conversation maps to its own agent session.
 
 ## How it works
 
 - **Inbound:** Chatwoot POSTs webhook events to the adapter's own HTTP listener.
   Only new inbound messages from the contact (`message_created`, `incoming`,
-  non-private, conversation `status: pending`) are answered.
+  non-private) are answered.
 - **Outbound:** replies are posted to Chatwoot's Application API using the Agent
   Bot token in the `api_access_token` header.
-- **Human handoff:** when a conversation is `open` (a human agent has taken
-  over) the bot stays silent. Resolving or re-opening it as `pending` hands
-  control back to the bot.
+- **Conversation status:** the bot answers regardless of `conversation.status` —
+  `open`, `pending`, `resolved` and `snoozed` are all replied to, so it will
+  keep answering alongside a human agent who has taken the conversation over.
 
 ## Setup
 

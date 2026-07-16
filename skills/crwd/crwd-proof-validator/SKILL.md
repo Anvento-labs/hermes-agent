@@ -1,7 +1,7 @@
 ---
 name: crwd-proof-validator
 description: "Reviews any gig proof — receipt, review, or link — validates it against the gig, records it, and replies."
-version: 0.4.0
+version: 0.5.0
 metadata:
   hermes:
     tags: [crwd, proof, receipt, review, ugc, link, validation, approval, duplicate, gig, submission]
@@ -19,9 +19,12 @@ payout/gig state, and it does **not** score risk.
 
 A proof is anything a member submits as evidence for a gig: an image (receipt
 photo, order or review screenshot) read with `vision_analyze`, a PDF read with
-`read_file`, or a link (Amazon review, TikTok/Instagram/YouTube post) opened with
+`read_file`, or a UGC post link (TikTok/Instagram/YouTube) opened with
 `web_extract` / `browser_navigate`. Receipts are one type among several, not the
-default — treat a review link with the same rigour.
+default — treat a review screenshot with the same rigour.
+
+**Reviews are proved by screenshot, never by link** — showing the product, the
+member's handle, and the review date. See step 2.
 
 ## Two standing rules
 
@@ -78,24 +81,18 @@ Links must actually load. An illegible or unreachable proof is **not** an approv
 | `receipt_amazon` | Amazon `Order #` |
 | `receipt_other` | Merchant order/transaction number |
 | `order_screenshot` | Order `#` — the order confirmation, not the receipt |
-| `amazon_review_link` | Review id from the URL |
-| `review_screenshot` | Review id if visible, else `platform:product:handle` |
+| `review_screenshot` | `{crwd_id}:{handle}:{review_date}` — all three, read off the image |
 | `ugc_link` | The post id |
 
 Classify honestly: an order confirmation and the receipt for that same order are
 **different artifacts of one purchase** and share an order number. Typing them
 apart is what lets both be recorded.
 
-**Not every "review link" is a review.** Only **Amazon** is known to give each review
-its own URL; **Target** is known not to — `target.com/p/hj/-/A-95279869` is the
-*product page*, identical for every member who reviews it, so keying on it would
-reject the next honest reviewer as a duplicate. Every other store is **unknown**.
-If a link's store is unfamiliar, **open it and look** (`web_extract` /
-`browser_navigate`): if you cannot establish it points at *that member's* review
-rather than the product, **ask for a screenshot instead** and validate it as
-`review_screenshot`. Never demand a permalink a store may not issue — that strands
-an honest member on a proof that doesn't exist. Detail:
-`references/validate-reviews.md`.
+**A review link is never proof — at any store.** Target's is the product page every
+reviewer shares; Amazon's permalink needs a login, so it can't be opened, and an
+unread proof is never accepted. A member who sends one has done nothing wrong:
+**coach for a screenshot** and validate that as `review_screenshot`. Never ask
+anyone to hunt for a permalink. Detail: `references/validate-reviews.md`.
 
 Pass it to `crwd_db` raw — the tool normalizes prefixes, spacing and hyphens, and
 **checks the number is shaped like that merchant's real order number**. If it comes
@@ -103,10 +100,13 @@ back refused, the number is not a key: a typed `12345`, a one-digit typo, or two
 order numbers pasted into one field. That's `invalid_order_number` → `needs_human`.
 **Never work around a refusal by inventing a key** — the refusal is the point.
 
-Members paste links inside sentences ("Review on Amazon: Worth it https://a.co/…"),
-so **pull the URL out of the prose first**. Short links (`a.co/d/…`,
-`tiktok.com/t/…`) carry no id until resolved — open them and use the resolved URL.
-Unresolvable → `no_identifier` → `needs_human`, never a guessed key.
+A review screenshot's key is **built by you, not found** — all three parts, or the
+tool refuses it and that's `no_identifier` → coach for a fuller screenshot.
+
+**UGC** links do carry an id. Members paste them inside sentences, so pull the URL
+out of the prose first; short links (`tiktok.com/t/…`) carry no id until resolved —
+open them and use the resolved URL. Unresolvable → `no_identifier` → `needs_human`,
+never a guessed key.
 
 ### 3. Resolve the gig context — look it up, don't assume
 
@@ -125,7 +125,6 @@ Unresolvable → `no_identifier` → `needs_human`, never a guessed key.
 
 - **Receipt** → `skill_view("crwd-proof-validator", "references/validate-receipts.md")`
 - **Review screenshot** → `skill_view("crwd-proof-validator", "references/validate-reviews.md")`
-- **Amazon review link** → `skill_view("crwd-proof-validator", "references/validate-amazon-review-links.md")`
 - **UGC link** → `skill_view("crwd-proof-validator", "references/validate-ugc-links.md")`
 
 For images, also call `crwd_verify_camera_receipt` (camera photo) or
@@ -137,9 +136,11 @@ the tools do not score.
 One gig can need several proofs. Call `check_gig_proof_completion(user_id, crwd_id)`
 — it reports `satisfied`, `outstanding`, `accepts`, and `complete` by comparing the
 gig's `requirements` against the member's accepted proofs. Use `outstanding` to know
-exactly what to coach for, and `accepts` for what would satisfy each — it is
-store-aware, so a Target review link accepts a screenshot while an Amazon one still
-wants the real link. Never recite a generic list.
+exactly what to coach for, and `accepts` for what would satisfy each. Never recite a
+generic list.
+
+`requires_review_link` is a **legacy flag name**: it takes a `review_screenshot` at
+every store. No gig ever waits on a link.
 
 Only four flags need an artifact of their own: `requires_receipt`,
 `requires_review_receipt`, `requires_review_link`, `requires_ugc_post`. The rest
@@ -173,7 +174,8 @@ different gig**.
 
 If the proof is *unclear* rather than *wrong*, ask and re-judge, **before** any
 verdict is stored: illegible or cropped → ask for a clearer shot of that region;
-gig ambiguous → ask which gig; link won't open → ask them to confirm it's public.
+handle, product or date out of frame → ask for a wider capture; gig ambiguous → ask
+which gig; UGC link won't open → ask them to confirm it's public.
 
 Only ask about what is **missing or unreadable**. A wrong product, an out-of-window
 date, or a duplicate is a **verdict, never a question**. Cap at one or two rounds.
@@ -184,8 +186,8 @@ knows from the gig page — not findings of yours:
 
 - **Short quantity** — "I only see one of the three, were the others out of stock?"
   The required quantity is public. Their answer goes in `reason`.
-- **A review link they can't produce** — offer the screenshot route instead of
-  leaving them stuck.
+- **A review sent as a link** — ask for the screenshot instead. This is a mechanics
+  ask, not a finding: the link was never going to work, whoever sent it.
 
 ### 8. Decide, then record
 
@@ -198,13 +200,16 @@ Record what you actually read, not just the verdict — a risk assessment reads 
 - `proof_info` — everything you pulled off the proof, shaped by type. Receipts:
   `merchant_name`, `store_location`, `purchase_date`, `order_number`,
   `total_amount`, `tax_amount`, `payment_method`, `line_items[]`. Reviews:
-  `platform`, `rating`, `review_text`, `handle`, `posted_at`, `verified_purchase`.
+  `platform`, `rating`, `review_text`, `handle`, `posted_at`, `product_as_shown`
+  (the title as it appears, truncation and all), `verified_purchase`.
   UGC: `platform`, `handle`, `posted_at`, `likes`, `comments`, `views`, `caption`.
 - `product_name` — the gig product this proof is for, as matched.
 - `store_name` — where it came from.
 - `source_url` / `proof_link` — **an accepted proof is refused without one.** That
   is the tool enforcing "never accept a proof you have not read": a typed order
-  number with no image cannot be accepted, and cannot complete a gig.
+  number with no image cannot be accepted, and cannot complete a gig. For a review
+  screenshot this is **the image URL** — never a review page URL, which proves
+  nothing since it can't be opened.
 
 Read the result:
 
@@ -264,9 +269,12 @@ Every verdict carries one. Internal only — never shown to the member.
 | `wrong_quantity` | Fewer items than required | gig requirement |
 | `unreadable` | Illegible / unextractable | vision |
 | `suspected_edited` | Editing/AI or metadata signals | playbook + metadata tools |
-| `link_unreachable` | Dead / private / removed | `web_extract` |
-| `link_not_owned` | Handle doesn't match the member | playbook |
+| `link_unreachable` | **UGC only** — dead / private / removed | `web_extract` |
+| `link_not_owned` | Handle doesn't match the member (UGC post, or the handle on a review screenshot) | playbook |
 | `content_mismatch` | Rating/content violates the gig rule | playbook |
+
+A review that arrives as a link gets **no code at all** — nothing is recorded until
+the screenshot arrives. It is not `wrong_proof_type` or `link_unreachable`.
 
 A wrong product or quantity is usually **confusion, not fraud** — still a rejection
 on the record, but say nothing to the member beyond the neutral acknowledgement.

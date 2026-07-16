@@ -61,9 +61,6 @@ DEFAULT_MAX_SEEN_IDS = 5000
 # poorly in the agent inbox — chunk beyond this.
 MAX_MESSAGE_LENGTH = 10_000
 
-# conversation.status values; only ``pending`` is the bot's to answer.
-_BOT_OWNED_STATUS = "pending"
-
 
 # ── module-level helpers ─────────────────────────────────────────────────────
 
@@ -453,12 +450,6 @@ class ChatwootAdapter(BasePlatformAdapter):
         # 3. Private notes — internal agent notes, not customer content.
         if payload.get("private") is True:
             return None
-        # 4. Human handoff — only ``pending`` is the bot's to answer.
-        conv = payload.get("conversation") if isinstance(payload.get("conversation"), dict) else {}
-        status = str(conv.get("status") or payload.get("status") or "").strip().lower()
-        if status and status != _BOT_OWNED_STATUS:
-            return None
-
         conversation_id = _resolve_conversation_id(payload)
         if not conversation_id:
             return None

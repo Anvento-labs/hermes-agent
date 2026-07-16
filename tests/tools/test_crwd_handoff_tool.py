@@ -98,18 +98,56 @@ class TestHandler:
     def test_success_path(self, chatwoot_env):
         with patch.object(t, "_resolve_conversation", return_value=("1", "42")), patch.object(
             t, "_post_private_note", return_value=(True, "")
-        ) as post:
+        ) as post, patch.object(t, "_open_conversation", return_value=(True, "")) as opener:
             out = json.loads(t.crwd_handoff_tool({"reason": "rejected submission", "summary": "s"}))
         assert out["notified"] is True
+        assert out["opened"] is True
         post.assert_called_once()
         assert post.call_args.args[0] == "1"
         assert post.call_args.args[1] == "42"
+        opener.assert_called_once_with("1", "42")
 
-    def test_post_failure_degrades_gracefully(self, chatwoot_env):
+    def test_post_failure_still_opens(self, chatwoot_env):
         with patch.object(t, "_resolve_conversation", return_value=("1", "42")), patch.object(
             t, "_post_private_note", return_value=(False, "HTTP 403")
-        ):
+        ), patch.object(t, "_open_conversation", return_value=(True, "")) as opener:
             out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
         # Never a hard error — the coach still hands off to the member.
         assert out["notified"] is False
+        assert out["opened"] is True
         assert out["error"] is None
+        opener.assert_called_once()
+
+    def test_open_failure_degrades_gracefully(self, chatwoot_env):
+        with patch.object(t, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            t, "_post_private_note", return_value=(True, "")
+        ), patch.object(t, "_open_conversation", return_value=(False, "HTTP 500")):
+            out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
+        assert out["notified"] is True
+        assert out["opened"] is False
+        assert out["error"] is None
+
+    def test_both_failures_degrade_gracefully(self, chatwoot_env):
+        with patch.object(t, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            t, "_post_private_note", return_value=(False, "boom")
+        ), patch.object(t, "_open_conversation", return_value=(False, "boom")):
+            out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
+        assert out["notified"] is False and out["opened"] is False
+        assert out["error"] is None
+
+
+class TestChatwootCalls:
+    def test_open_conversation_hits_toggle_status(self, chatwoot_env):
+        with patch.object(t, "_post", return_value=(True, "")) as post:
+            assert t._open_conversation("1", "42") == (True, "")
+        path, payload = post.call_args.args
+        assert path == "1/conversations/42/toggle_status"
+        assert payload == {"status": "open"}
+
+    def test_private_note_hits_messages(self, chatwoot_env):
+        with patch.object(t, "_post", return_value=(True, "")) as post:
+            t._post_private_note("1", "42", "note body")
+        path, payload = post.call_args.args
+        assert path == "1/conversations/42/messages"
+        assert payload["private"] is True
+        assert payload["content"] == "note body"

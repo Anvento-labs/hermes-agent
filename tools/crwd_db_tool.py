@@ -82,7 +82,7 @@ _OBJECTID_RE = re.compile(r"^[a-fA-F0-9]{24}$")
 
 _PROOF_TYPES = {
     "receipt_target", "receipt_amazon", "receipt_other",
-    "order_screenshot", "review_screenshot", "amazon_review_link", "ugc_link",
+    "order_screenshot", "review_screenshot", "ugc_link",
 }
 _PROOF_STATUSES = {"accepted", "rejected", "needs_human"}
 _PROOF_CONFIDENCE = {"low", "medium", "high"}
@@ -105,22 +105,11 @@ _REQUIREMENT_ARTIFACTS = {
         "receipt_target", "receipt_amazon", "receipt_other", "order_screenshot",
     },
     "requires_review_receipt": {"review_screenshot"},
-    "requires_review_link": {"amazon_review_link"},
+    # Legacy name: no store gives a review a link we can read (Target's is the
+    # product page; Amazon's needs a login), so a screenshot is the only proof.
+    "requires_review_link": {"review_screenshot"},
     "requires_ugc_post": {"ugc_link"},
 }
-# Stores KNOWN to give each review its own permalink. Only for these is a review
-# link genuinely obtainable, so only here may a screenshot fail to satisfy
-# requires_review_link -- accepting one would quietly drop a deliverable the gig
-# asked for.
-_STORES_WITH_REVIEW_URLS = {"amazon"}
-# Stores KNOWN to have no per-review URL: their "review link" is a product page,
-# identical for every reviewer (e.g. target.com/p/hj/-/A-95279869).
-_STORES_WITHOUT_REVIEW_URLS = {"target"}
-# Everything else is UNKNOWN, and unknown resolves in the member's favour: a
-# screenshot satisfies requires_review_link. Demanding a permalink from a store
-# that may not issue one would strand an honest member on a proof they cannot
-# produce -- the same failure as the Target product-page trap. The skill is told to
-# check the web when it needs to know for sure.
 
 
 def _norm_store(name: str) -> str:
@@ -170,13 +159,9 @@ def _order_number_plausible(digits: str, proof_type: str) -> bool:
 
 
 def _artifacts_for(flag: str, store_name: str = "") -> set:
-    """What can satisfy this requirement flag at this store."""
-    types = set(_REQUIREMENT_ARTIFACTS.get(flag) or set())
-    if flag == "requires_review_link":
-        if _norm_store(store_name) not in _STORES_WITH_REVIEW_URLS:
-            # Known-no-URL (Target) or unknown -- a screenshot stands in.
-            types.add("review_screenshot")
-    return types
+    """What can satisfy this requirement flag. ``store_name`` no longer changes
+    the answer -- a review is a screenshot everywhere -- but callers pass it."""
+    return set(_REQUIREMENT_ARTIFACTS.get(flag) or set())
 # Verified *inside* another artifact, never submitted on their own. The data is
 # unambiguous: requires_order_id never appears without requires_receipt (41 gigs
 # vs 0), and the app stores order_id and receipt_file on the same row;
@@ -212,8 +197,8 @@ _UGC_POST_PATTERNS = (
         re.compile(r"youtu\.be/([A-Za-z0-9_-]+)", re.IGNORECASE),
     )),
 )
-_AMAZON_REVIEW_RE = re.compile(
-    r"/(?:gp/customer-reviews|review)/([A-Z0-9]+)", re.IGNORECASE
+_REVIEW_SCREENSHOT_KEY_RE = re.compile(
+    r"^([0-9a-fA-F]{24})\s*[:|/]\s*(.+?)\s*[:|/]\s*(.+)$"
 )
 
 
@@ -238,6 +223,14 @@ def _normalize_proof_id(raw: str, proof_type: str = "") -> str:
     short-link forms -- all of which point at the same post. The ``platform:``
     prefix keeps a YouTube id from colliding with an Instagram shortcode, which
     would otherwise reject a member for "duplicating" an unrelated stranger's post.
+
+    Review screenshots key on ``{crwd_id}:{handle}:{date}``, read off the image.
+    The handle is load-bearing: without it, two honest members reviewing one gig
+    on one day collide and the second is rejected as a duplicate. The product is
+    deliberately absent -- phone screenshots truncate titles, so it would hash two
+    ways for one review. This slugifies only; date, product and legibility checks
+    are skill-side (vision). Review *urls* never key: Target's is the product page
+    and Amazon's needs a login, so neither can be read.
 
     Returns "" when nothing defensible can be extracted; callers must treat that
     as *not extractable* rather than as a key.
@@ -264,24 +257,18 @@ def _normalize_proof_id(raw: str, proof_type: str = "") -> str:
         # unresolved vm.tiktok.com short link) is not a key -- say so.
         return ""
 
-    if proof_type == "amazon_review_link" or (not proof_type and is_url and "amazon." in lowered):
-        match = _AMAZON_REVIEW_RE.search(raw)
-        if match:
-            return match.group(1).upper()
-        return ""
-
     if proof_type == "review_screenshot":
-        # A screenshot rarely carries a per-review id, so the caller usually builds
-        # a composite: "platform:product:handle". Slugify it whole -- digit-only
-        # normalization would reduce target:A-95279869:sarah and
-        # target:A-95279869:mike to the same key and reject the second reviewer.
         if is_url:
-            # A product-page url (target.com/p/hj/-/A-95279869) is identical for
-            # every member who reviews that product -- it identifies the product,
-            # not whose review it is. Never key on it.
             return ""
-        slug = re.sub(r"[^a-z0-9]+", "-", lowered).strip("-")
-        return slug
+        match = _REVIEW_SCREENSHOT_KEY_RE.match(raw)
+        if not match:
+            return ""
+        crwd_id = match.group(1).lower()
+        handle_slug = re.sub(r"[^a-z0-9]+", "-", match.group(2).lower()).strip("-")
+        date_slug = re.sub(r"[^a-z0-9]+", "-", match.group(3).lower()).strip("-")
+        if not handle_slug or not date_slug:
+            return ""
+        return f"{crwd_id}:{handle_slug}:{date_slug}"
 
     if proof_type in _RECEIPT_TYPES or not is_url:
         digits = re.sub(r"\D", "", _ORDER_PREFIX_RE.sub("", raw))
@@ -1651,9 +1638,8 @@ def _gig_proof_completion(user_id: str, crwd_id: str) -> Dict[str, Any]:
         "determinable": True,
         "satisfied": sorted(satisfied),
         "outstanding": sorted(outstanding),
-        # What would satisfy each outstanding flag at this gig's store(s) -- store
-        # aware, so a Target review link accepts a screenshot and an Amazon one
-        # does not.
+        # What would satisfy each outstanding flag. requires_review_link takes a
+        # review_screenshot at every store -- the flag's name is legacy.
         "accepts": {flag: sorted(required[flag]) for flag in sorted(outstanding)},
         "field_level": spec.get("field_level") or [],
         "accepted_types": sorted(accepted),
@@ -2356,23 +2342,28 @@ CRWD_DB_SCHEMA = {
                 "description": (
                     "The proof's own identifier, as extracted (store_proof, "
                     "check_duplicate_proof, find_proof). Target REC#, Amazon Order #, "
-                    "Amazon review link, or UGC post link. Normalized before comparison. "
-                    "Never invent one: if no identifier can be read, store the proof as "
-                    "needs_human with reason_code no_identifier."
+                    "UGC post link, or for review_screenshot "
+                    "'{crwd_id}:{handle}:{review_date}' -- gig id, the reviewer handle "
+                    "and the review date exactly as shown on the image (this tool "
+                    "slugifies only: it does not parse or validate dates). Reviews are "
+                    "never keyed on a url. Normalized before comparison. Never invent "
+                    "one: if no identifier can be read, store the proof as needs_human "
+                    "with reason_code no_identifier."
                 ),
             },
             "proof_type": {
                 "type": "string",
                 "enum": [
                     "receipt_target", "receipt_amazon", "receipt_other",
-                    "order_screenshot", "review_screenshot", "amazon_review_link",
-                    "ugc_link",
+                    "order_screenshot", "review_screenshot", "ugc_link",
                 ],
                 "description": (
                     "The artifact's kind. An order confirmation (order_screenshot) and "
                     "the receipt for that same order are different artifacts of one "
                     "purchase and share an order number — typing them apart is what "
-                    "lets a member record both."
+                    "lets a member record both. A review is always a review_screenshot: "
+                    "there is no review-link proof type, so a review url is coached into "
+                    "a screenshot rather than recorded."
                 ),
             },
             "status": {

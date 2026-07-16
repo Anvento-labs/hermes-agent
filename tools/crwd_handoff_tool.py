@@ -1,10 +1,18 @@
 """CRWD handoff tool -- loop a human into the current Chatwoot conversation.
 
 Registers a single LLM-callable tool ``crwd_handoff`` (gated on Chatwoot creds)
-that posts an **internal private note** to the CRWD Coach's current Chatwoot
-conversation so a human agent has context and can take over. The member-facing
-"I'm looping in a human" message is just the agent's normal reply text -- this
-tool only handles the internal notification.
+that does two things to the CRWD Coach's current Chatwoot conversation so a
+human agent has context and can pick it up:
+
+1. posts an **internal private note** carrying the reason + summary, and
+2. flips ``conversation.status`` to ``open``, which is what puts the
+   conversation in front of the team and lets Chatwoot's auto-assignment give
+   it an owner (``pending`` conversations sit in the bot's queue unassigned).
+
+The member-facing "I'm looping in a human" message is just the agent's normal
+reply text -- this tool only handles the internal side. The coach keeps
+answering the thread after a handoff; the human joins it rather than replacing
+the bot, so nothing here silences the agent.
 
 Self-contained by design: it resolves the current conversation from the gateway
 session context (``HERMES_SESSION_PLATFORM`` / ``HERMES_SESSION_CHAT_ID``) and
@@ -82,20 +90,16 @@ def _resolve_conversation() -> Tuple[Optional[str], Optional[str]]:
     return account, conversation
 
 
-# --- Private-note post ---
+# --- Chatwoot calls ---
 
-def _post_private_note(account_id: str, conversation_id: str, content: str) -> Tuple[bool, str]:
+def _post(path: str, payload: Dict[str, Any]) -> Tuple[bool, str]:
+    """POST JSON to a Chatwoot account-scoped path. Never raises."""
     base_url = os.getenv("CHATWOOT_BASE_URL", "").strip().rstrip("/")
-    token = _agent_token()
-    url = f"{base_url}/api/v1/accounts/{account_id}/conversations/{conversation_id}/messages"
-    body = json.dumps(
-        {"content": content, "message_type": "outgoing", "private": True}
-    ).encode("utf-8")
     req = urllib.request.Request(
-        url,
-        data=body,
+        f"{base_url}/api/v1/accounts/{path}",
+        data=json.dumps(payload).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json", "api_access_token": token},
+        headers={"Content-Type": "application/json", "api_access_token": _agent_token()},
     )
     try:
         with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
@@ -106,6 +110,21 @@ def _post_private_note(account_id: str, conversation_id: str, content: str) -> T
         return False, f"HTTP {exc.code}"
     except Exception as exc:  # network / URL / timeout
         return False, str(exc)
+
+
+def _post_private_note(account_id: str, conversation_id: str, content: str) -> Tuple[bool, str]:
+    return _post(
+        f"{account_id}/conversations/{conversation_id}/messages",
+        {"content": content, "message_type": "outgoing", "private": True},
+    )
+
+
+def _open_conversation(account_id: str, conversation_id: str) -> Tuple[bool, str]:
+    """Flip the conversation to ``open`` so it lands in the team's queue."""
+    return _post(
+        f"{account_id}/conversations/{conversation_id}/toggle_status",
+        {"status": "open"},
+    )
 
 
 def _compose_note(reason: str, summary: str) -> str:
@@ -128,6 +147,7 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
             {
                 "_type": "crwd_handoff",
                 "notified": False,
+                "opened": False,
                 "reason": "Chatwoot not configured; skip the note and still hand off to the member.",
                 "error": None,
             },
@@ -140,6 +160,7 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
             {
                 "_type": "crwd_handoff",
                 "notified": False,
+                "opened": False,
                 "reason": "No current Chatwoot conversation; skip the note and still hand off to the member.",
                 "error": None,
             },
@@ -147,25 +168,39 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
         )
 
     note = _compose_note(str(args.get("reason", "")), str(args.get("summary", "")))
-    ok, err = _post_private_note(account_id, conversation_id, note)
-    if not ok:
+    notified, note_err = _post_private_note(account_id, conversation_id, note)
+    if not notified:
         # Never hard-fail: a note that can't post must not block the handoff.
-        logger.warning("[crwd_handoff] private note failed (%s)", err)
-        return json.dumps(
-            {
-                "_type": "crwd_handoff",
-                "notified": False,
-                "reason": "Internal note could not be posted; still hand off to the member warmly.",
-                "error": None,
-            },
-            ensure_ascii=False,
+        logger.warning("[crwd_handoff] private note failed (%s)", note_err)
+
+    opened, open_err = _open_conversation(account_id, conversation_id)
+    if not opened:
+        logger.warning("[crwd_handoff] status → open failed (%s)", open_err)
+
+    if notified and opened:
+        reason = (
+            "Team notified and conversation opened for assignment. Send the member a "
+            "warm handoff message, then keep helping as usual."
         )
+    elif notified:
+        reason = (
+            "Team notified, but the conversation could not be opened for assignment. "
+            "Still hand off to the member warmly, then keep helping as usual."
+        )
+    elif opened:
+        reason = (
+            "Conversation opened for assignment, but the internal note could not be "
+            "posted. Still hand off to the member warmly, then keep helping as usual."
+        )
+    else:
+        reason = "Chatwoot could not be updated; still hand off to the member warmly, then keep helping as usual."
 
     return json.dumps(
         {
             "_type": "crwd_handoff",
-            "notified": True,
-            "reason": "Team notified via internal note. Send the member a warm handoff message, then stop replying.",
+            "notified": notified,
+            "opened": opened,
+            "reason": reason,
             "error": None,
         },
         ensure_ascii=False,
@@ -177,13 +212,14 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
 CRWD_HANDOFF_SCHEMA = {
     "name": "crwd_handoff",
     "description": (
-        "Loop a human into the CURRENT CRWD conversation by posting an internal "
-        "note for the team (frustration/anger, repeated unresolved issue, "
-        "rejected submission, money/account dispute, or an out-of-scope-but-"
-        "relevant question you can't safely answer). This posts the internal "
-        "note only — you must still send the member a short, warm 'looping in a "
-        "human' message yourself, then stop replying. Safe to call even outside "
-        "Chatwoot: it no-ops the note and tells you to hand off anyway."
+        "Loop a human into the CURRENT CRWD conversation (frustration/anger, "
+        "repeated unresolved issue, rejected submission, money/account dispute, "
+        "or an out-of-scope-but-relevant question you can't safely answer). It "
+        "posts an internal note for the team and opens the conversation so it "
+        "gets assigned to an agent. You must still send the member a short, warm "
+        "'looping in a human' message yourself, and you keep answering the thread "
+        "afterwards — the human joins you rather than replacing you. Safe to call "
+        "even outside Chatwoot: it no-ops and tells you to hand off anyway."
     ),
     "parameters": {
         "type": "object",

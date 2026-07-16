@@ -213,16 +213,11 @@ class TestConvert:
         a = _make_adapter()
         assert a._convert(_msg_created(private=True)) is None
 
-    def test_status_open_ignored(self):
+    @pytest.mark.parametrize("val", ["open", "pending", "resolved", "snoozed", ""])
+    def test_status_does_not_gate(self, val):
         a = _make_adapter()
         payload = _msg_created()
-        payload["conversation"]["status"] = "open"
-        assert a._convert(payload) is None
-
-    def test_status_pending_accepted(self):
-        a = _make_adapter()
-        payload = _msg_created()
-        payload["conversation"]["status"] = "pending"
+        payload["conversation"]["status"] = val
         assert a._convert(payload) is not None
 
     def test_wrong_event_ignored(self):

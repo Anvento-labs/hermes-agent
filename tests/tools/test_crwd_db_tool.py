@@ -389,9 +389,7 @@ class TestWaitlistedGigs:
         member_oid = t._oid(user_id)
         gig_oid = t._oid("69e6a4d6cea992cbda22b381")
         mock_members = MagicMock()
-        member_cursor = MagicMock()
-        mock_members.find.return_value = member_cursor
-        member_cursor.limit.return_value = [
+        mock_members.find.return_value = [
             {
                 "member": member_oid,
                 "crwd_id": gig_oid,
@@ -571,18 +569,14 @@ class TestNormalizeProofId:
         # vm.tiktok.com carries no post id until followed -- must not be guessed.
         assert t._normalize_proof_id("https://vm.tiktok.com/ZMabc/", "ugc_link") == ""
 
-    def test_amazon_review_link_keys_on_review_id(self):
-        key = t._normalize_proof_id(
+    def test_amazon_review_url_is_not_a_key(self):
+        # Reviews are proved by screenshot: the permalink is behind a sign-in wall,
+        # so it can never be read, and an unread proof is never accepted.
+        for url in (
             "https://www.amazon.com/gp/customer-reviews/R2ABC123?ie=UTF8",
-            "amazon_review_link",
-        )
-        assert key == "R2ABC123"
-        assert (
-            t._normalize_proof_id(
-                "https://amazon.com/gp/customer-reviews/R2ABC123", "amazon_review_link"
-            )
-            == key
-        )
+            "https://amazon.com/gp/customer-reviews/R2ABC123",
+        ):
+            assert t._normalize_proof_id(url, "") == "", url
 
 
 def _proof_doc(**over):
@@ -830,15 +824,18 @@ class TestStoreProof:
             ))
         assert coll.insert_one.call_args[0][0]["normalized_proof_id"] == "tiktok:7311123"
 
-    def test_amazon_review_link_stores_review_id(self, monkeypatch):
+    def test_review_screenshot_stores_gig_handle_date_key(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         with patch.object(t, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args(
-                proof_id="https://www.amazon.com/gp/customer-reviews/R2ABC123?ie=UTF8",
-                proof_type="amazon_review_link",
+                proof_id="69deb0781ca6038a3a1f6f8a:sarah_k:July 15, 2026",
+                proof_type="review_screenshot",
+                proof_link="https://cdn.example/shot.png",
             ))
-        assert coll.insert_one.call_args[0][0]["normalized_proof_id"] == "R2ABC123"
+        assert coll.insert_one.call_args[0][0]["normalized_proof_id"] == (
+            "69deb0781ca6038a3a1f6f8a:sarah-k:july-15-2026"
+        )
 
     def test_unique_index_is_per_artifact_for_idempotency(self, monkeypatch):
         # Includes proof_type so one purchase can back an order screenshot AND a
@@ -1021,41 +1018,82 @@ class TestStoreRequirements:
         assert out["gig_stores"][0]["sort_order"] == 0
 
 
-class TestReviewScreenshotCompositeKeys:
-    """A review screenshot rarely has a per-review id, so callers pass a composite
-    'platform:product:handle'. Digit-only normalization would collapse two members
-    reviewing the same product onto one key and reject the second."""
+class TestReviewScreenshotGigHandleDateKeys:
+    """A review screenshot keys on '{crwd_id}:{handle}:{review_date_as_shown}'.
+    The tool slugifies only — it does not parse dates or verify handles."""
 
-    def test_two_members_same_product_get_distinct_keys(self):
-        sarah = t._normalize_proof_id("target:A-95279869:sarah_k", "review_screenshot")
-        mike = t._normalize_proof_id("target:A-95279869:mike_r", "review_screenshot")
-        assert sarah and mike
-        assert sarah != mike
+    GIG = "69deb0781ca6038a3a1f6f8a"
+    OTHER_GIG = "aaaaaaaaaaaaaaaaaaaaaaaa"
 
-    def test_composite_without_digits_survives(self):
-        key = t._normalize_proof_id("amazon:The Night Before:@joanasydni", "review_screenshot")
-        assert key == "amazon-the-night-before-joanasydni"
+    def test_gig_handle_date_slugifies(self):
+        key = t._normalize_proof_id(f"{self.GIG}:sarah_k:July 15, 2026", "review_screenshot")
+        assert key == f"{self.GIG}:sarah-k:july-15-2026"
 
-    def test_composite_is_stable_across_formatting(self):
-        a = t._normalize_proof_id("amazon:The Night Before:@joanasydni", "review_screenshot")
-        b = t._normalize_proof_id("Amazon: The Night Before: @joanasydni", "review_screenshot")
-        assert a == b
+    def test_same_text_is_stable_across_separators(self):
+        a = t._normalize_proof_id(f"{self.GIG}:sarah_k:July 15, 2026", "review_screenshot")
+        b = t._normalize_proof_id(f"{self.GIG}|sarah_k|July 15, 2026", "review_screenshot")
+        c = t._normalize_proof_id(f"{self.GIG} / sarah_k / July 15, 2026", "review_screenshot")
+        assert a == b == c == f"{self.GIG}:sarah-k:july-15-2026"
 
-    def test_same_member_same_review_is_one_key(self):
-        a = t._normalize_proof_id("target:A-95279869:sarah_k", "review_screenshot")
-        b = t._normalize_proof_id("TARGET : A-95279869 : sarah_k", "review_screenshot")
-        assert a == b
+    def test_each_part_changes_the_key(self):
+        # Notably the handle: two honest members reviewing one gig on one day must
+        # not be rejected as duplicates of each other.
+        base = t._normalize_proof_id(f"{self.GIG}:sarah_k:July 15, 2026", "review_screenshot")
+        for other in (
+            f"{self.GIG}:mike_r:July 15, 2026",         # different member
+            f"{self.GIG}:sarah_k:July 16, 2026",        # different day
+            f"{self.OTHER_GIG}:sarah_k:July 15, 2026",  # different gig
+        ):
+            assert base != t._normalize_proof_id(other, "review_screenshot") != ""
+
+    def test_does_not_refuse_unparsed_date_text(self):
+        # Date window / legibility is skill-side; the tool must not parse dates.
+        # Relative dates ("2 days ago") are what phone apps actually render.
+        key = t._normalize_proof_id(f"{self.GIG}:sarah_k:2 days ago", "review_screenshot")
+        assert key == f"{self.GIG}:sarah-k:2-days-ago"
+
+    def test_missing_any_part_refuses(self):
+        for raw in (
+            "target:A-95279869:sarah_k",        # no gig id
+            "July 15, 2026",                    # bare date
+            f"{self.GIG}:July 15, 2026",        # no handle
+            f"{self.GIG}:sarah_k",              # no date
+            f"{self.GIG}:sarah_k:",             # empty date
+            f"{self.GIG}::July 15, 2026",       # empty handle
+            f"{self.GIG}:sarah_k:   ",          # whitespace date
+        ):
+            assert t._normalize_proof_id(raw, "review_screenshot") == "", raw
+
+    def test_object_id_and_handle_case_are_folded(self):
+        a = t._normalize_proof_id(f"{self.GIG.upper()}:Sarah_K:July 15, 2026", "review_screenshot")
+        b = t._normalize_proof_id(f"{self.GIG}:sarah_k:july 15, 2026", "review_screenshot")
+        assert a == b == f"{self.GIG}:sarah-k:july-15-2026"
+
+
+class TestReviewLinksAreNotAProofType:
+    """Reviews are proved by screenshot only. Target's 'review link' is the product
+    page; Amazon's permalink is behind a sign-in wall and cannot be read."""
+
+    def test_amazon_review_link_is_rejected_as_a_proof_type(self, monkeypatch):
+        assert "amazon_review_link" not in t._PROOF_TYPES
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        out = json.loads(t.crwd_db_tool(_store_args(
+            proof_id="R1M6OC1KJ7ZMUQ", proof_type="amazon_review_link",
+        )))
+        assert "error" in out and out["error"]
 
 
 class TestProductPageUrlsAreNeverKeys:
-    """Target has no per-review url: /p/hj/-/A-95279869 is the product page every
-    reviewer of that product shares. Keying on it rejects honest reviewers."""
+    """No review url is ever a key. Target's /p/hj/-/A-95279869 is the product page
+    every reviewer shares; Amazon's permalink needs a login and can't be read."""
 
     TARGET_URL = "https://www.target.com/p/hj/-/A-95279869"
+    AMAZON_REVIEW_URL = "https://amazon.com/gp/customer-reviews/R1M6OC1KJ7ZMUQ?ref=pf_ov"
 
-    def test_target_product_url_never_normalizes(self):
-        for proof_type in ("review_screenshot", "ugc_link", "amazon_review_link", ""):
-            assert t._normalize_proof_id(self.TARGET_URL, proof_type) == "", proof_type
+    def test_review_urls_never_normalize(self):
+        for url in (self.TARGET_URL, self.AMAZON_REVIEW_URL):
+            for proof_type in ("review_screenshot", "ugc_link", ""):
+                assert t._normalize_proof_id(url, proof_type) == "", (url, proof_type)
 
     def test_target_url_cannot_be_stored(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
@@ -1278,25 +1316,18 @@ class TestGigProofCompletion:
         assert out["outstanding"] == ["requires_review_receipt"]
         assert out["satisfied"] == ["requires_receipt"]
 
-    def test_review_screenshot_satisfies_review_link_at_target_only(self, monkeypatch):
-        # Target has no per-review URL, so a screenshot is the only way a member CAN
-        # prove it. Amazon has one, so a screenshot must NOT silently satisfy the
-        # flag there -- that would drop a deliverable the gig asked for.
+    def test_review_screenshot_satisfies_review_link_everywhere(self, monkeypatch):
+        # requires_review_link is a legacy flag name: a screenshot is the only
+        # thing that ever satisfies it, at every store. No link is owed anywhere.
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
-        target = _gig_with(requires_review_link=True, store_name="Target ")
-        with patch.object(t, "_db", return_value=_completion_db(target, ["review_screenshot"])):
-            out = json.loads(t.crwd_db_tool({
-                "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
-            }))
-        assert out["complete"] is True, "Target: screenshot should stand in for the link"
-
-        amazon = _gig_with(requires_review_link=True, store_name="Amazon")
-        with patch.object(t, "_db", return_value=_completion_db(amazon, ["review_screenshot"])):
-            out = json.loads(t.crwd_db_tool({
-                "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
-            }))
-        assert out["complete"] is False, "Amazon: the review link is still owed"
-        assert out["accepts"]["requires_review_link"] == ["amazon_review_link"]
+        for store in ("Target ", "Amazon", "Walmart"):
+            gig = _gig_with(requires_review_link=True, store_name=store)
+            with patch.object(t, "_db", return_value=_completion_db(gig, ["review_screenshot"])):
+                out = json.loads(t.crwd_db_tool({
+                    "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
+                }))
+            assert out["complete"] is True, f"{store}: screenshot must complete the gig"
+        assert t._artifacts_for("requires_review_link", "Amazon") == {"review_screenshot"}
 
     def test_gig_with_no_artifact_requirements_is_not_asserted_complete(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
@@ -1339,7 +1370,8 @@ class TestIsGigCompletedFlag:
         proofs.find_one.return_value = None
         with patch.object(t, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool(_store_args(
-                proof_id="amazon:Thing:@handle", proof_type="review_screenshot",
+                proof_id="69b8614f1083b9302fd0a9a7:sarah_k:July 15, 2026",
+                proof_type="review_screenshot",
                 crwd_id="g", user_id="u")))
         assert out["is_gig_completed"] is True
         assert proofs.insert_one.call_args[0][0]["is_gig_completed"] is True
@@ -1374,10 +1406,10 @@ class TestGigCompleteLabelExists:
         assert "gig-complete" in PREDEFINED_LABEL_TITLES
 
 
-class TestUnknownStoreReviewLinks:
-    """Only Amazon is known to issue per-review permalinks; only Target is known not
-    to. Every other store is unknown, and unknown must resolve in the member's
-    favour -- demanding a link a store may not issue strands an honest member."""
+class TestReviewLinkFlagTakesAScreenshotAtEveryStore:
+    """requires_review_link is satisfied by a review_screenshot and nothing else.
+    No store is exempt: Target has no per-review url, and Amazon's permalink can't
+    be opened. Never demand a link from anyone."""
 
     def _complete_with_screenshot(self, store_name):
         gig = _gig_with(requires_review_link=True, store_name=store_name)
@@ -1394,11 +1426,11 @@ class TestUnknownStoreReviewLinks:
             out = self._complete_with_screenshot(store)
             assert out["complete"] is True, f"{store} should accept a screenshot"
 
-    def test_amazon_still_demands_the_real_link(self, monkeypatch):
+    def test_amazon_accepts_only_a_screenshot(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         out = self._complete_with_screenshot("Amazon")
-        assert out["complete"] is False
-        assert out["accepts"]["requires_review_link"] == ["amazon_review_link"]
+        assert out["complete"] is True
+        assert t._artifacts_for("requires_review_link", "Amazon") == {"review_screenshot"}
 
     def test_target_accepts_a_screenshot_despite_the_trailing_space(self, monkeypatch):
         # The data holds both 'Target' and 'Target ' -- normalization must catch both.
@@ -1407,9 +1439,8 @@ class TestUnknownStoreReviewLinks:
             assert self._complete_with_screenshot(store)["complete"] is True, store
 
     def test_artifacts_for_is_the_single_source(self):
-        assert "review_screenshot" in t._artifacts_for("requires_review_link", "Walmart")
-        assert "review_screenshot" not in t._artifacts_for("requires_review_link", "Amazon")
-        assert "review_screenshot" in t._artifacts_for("requires_review_link", "")
+        for store in ("Walmart", "Amazon", "Target", ""):
+            assert t._artifacts_for("requires_review_link", store) == {"review_screenshot"}, store
 
 
 class TestMultiStoreGigsAreALatentRisk:

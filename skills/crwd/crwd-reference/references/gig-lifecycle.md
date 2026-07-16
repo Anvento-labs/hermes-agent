@@ -7,9 +7,10 @@ Every member goes through the same flow:
 2. **Apply** — the member applies for a gig in the CRWD app/website.
 3. **Get approved** — CRWD or the brand approves the application before the member can start.
 4. **Perform the gig** — see gig types below.
-5. **Submit proof** — receipts, screenshots, review links, UGC video/photo links, uploaded
+5. **Submit proof** — receipts, review screenshots, UGC video/photo links, uploaded
    **into the coach chat (this conversation) as messages/attachments**, where the
    `crwd-proof-validator` skill reviews them. Proof is not uploaded in the CRWD app.
+   Reviews are always proved by **screenshot**, never by link.
 6. **Get paid** — payment is triggered once proof is reviewed and verified.
 
 ## Gig types
@@ -23,8 +24,8 @@ Every member goes through the same flow:
 
 **Online gigs:**
 - Member orders the product (commonly via Amazon) and leaves a review. Most online gigs want
-  a receipt, the order id, a review screenshot, a review link, and a rating — but again, read
-  the gig.
+  a receipt, the order id, a review screenshot, and a rating — but again, read the gig.
+  `requires_review_link` is a legacy name and also takes a screenshot.
 - Payment process starts once that proof is submitted and verified.
 
 **Proof is per gig, never per gig type.** Requirements live on each store as `requires_*`
