@@ -184,6 +184,8 @@ class TestAutoLabelConversation:
 
     def test_applies_labels(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_conversation_has_handoff_label", return_value=False,
+        ), patch.object(
             auto, "_create_labels_if_not_exists",
             return_value={"success": True, "existing": ["proof-submission"]},
         ), patch.object(
@@ -196,6 +198,49 @@ class TestAutoLabelConversation:
         assert out["success"] is True
         assert out["classified"] == ["proof-submission"]
         assign.assert_called_once_with("1", "42", ["proof-submission"], replace=True)
+
+    def test_sticky_handoff_preserved_on_later_turn(self, chatwoot_env):
+        """A conversation already escalated keeps handoff-escalation even when
+        the current turn doesn't call crwd_handoff (regression: add-then-remove)."""
+        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_conversation_has_handoff_label", return_value=True,
+        ), patch.object(
+            auto, "_create_labels_if_not_exists",
+            return_value={"success": True, "existing": ["payment-payout"]},
+        ), patch.object(
+            auto, "_member_has_active_gigs", return_value=(False, set()),
+        ), patch.object(
+            auto, "_assign_labels",
+            return_value={"success": True, "labels": [], "error": None},
+        ) as assign:
+            # No handoff_requested this turn — just a follow-up message.
+            out = auto.auto_label_conversation("ok thank you", handoff_requested=False)
+        assert out["classified"] == ["off-topic", "handoff-escalation"]
+        assign.assert_called_once_with(
+            "1", "42", ["off-topic", "handoff-escalation"], replace=True
+        )
+
+    def test_handoff_this_turn_does_not_need_lookup(self, chatwoot_env):
+        """When handoff fired this turn, the sticky lookup is short-circuited."""
+        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_conversation_has_handoff_label",
+        ) as sticky, patch.object(
+            auto, "_create_labels_if_not_exists",
+            return_value={"success": True, "existing": []},
+        ), patch.object(
+            auto, "_member_has_active_gigs", return_value=(False, set()),
+        ), patch.object(
+            auto, "_assign_labels",
+            return_value={"success": True, "labels": [], "error": None},
+        ) as assign:
+            out = auto.auto_label_conversation(
+                "my payout never came", handoff_requested=True
+            )
+        sticky.assert_not_called()
+        assert out["classified"] == ["payment-payout", "handoff-escalation"]
+        assign.assert_called_once_with(
+            "1", "42", ["payment-payout", "handoff-escalation"], replace=True
+        )
 
 
 class TestAutoLabelHook:

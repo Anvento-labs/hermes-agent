@@ -3,6 +3,13 @@
 Getting proof right is what keeps a submission from being rejected. Always tell the member
 the **exact** format for their gig type.
 
+## Where proof goes
+
+Proof is submitted by uploading it **directly in the coach chat (this conversation) as a
+message/attachment** — receipts, screenshots, review links, and UGC links all go here, not
+into the CRWD app. The `crwd-proof-validator` skill picks up the submission and replies with
+the verdict.
+
 ## Live gig (in-store) proof
 
 1. **Receipt photo** — clear, readable, showing the product line item and store.

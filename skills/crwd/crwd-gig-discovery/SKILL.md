@@ -79,16 +79,32 @@ Find gigs and explain them against the member's **real** data — not in the abs
    Full detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
 7. **Include every product name + buy link.** `list_active_gigs` / `get_gig_details`
    return `stores[].products[]` with `name` + `product_url`. `get_user_gig_status`
-   returns `products[]` (full list) plus legacy `buy_link` (first only). For
-   product-link questions, list **every** `products[]` entry as
+   returns `products[]` (full list) plus legacy `buy_link` (first only). Whenever a
+   gig has a product, list **every** `products[]` entry as
    `[Product Name](product_url)` — one per line, clickable product name. Never
    claim there's only one link when `products[]` has more, and never substitute
    `gig_url`. Prefer `get_user_products` with `crwd_id` / `get_gig_details` when
    answering a specific gig. Keep gig-title markdown and product markdown on
    separate lines.
-8. **For a live (in-store / `irl`) gig, help them get to the store.** The gig data names the
-   retailer (`stores[].store_name`) and, for `irl` gigs, an `address`/`city`/`state`/
-   `postal_code`. Surface that store info by default when you describe a live gig.
+   - **If you mention a link, show it.** Never describe the flow with a dangling
+     reference like *"order it with the gig's link"*, *"use the buy link"*, or
+     *"order it through the link"* unless the real `product_url` is rendered in
+     that same message. A member cannot click a link you only talked about. When
+     you describe buying/ordering a product, fetch and paste the actual
+     `[Product Name](product_url)` right there — don't defer it to a later turn.
+8. **Only a live (`gig_type: "irl"`) gig has a physical store — check `gig_type` first.**
+   Store-locating (nearest Walmart/Target, address, hours, "open now?") applies **only** when
+   the gig's `gig_type` is `irl`. `irl` gigs carry a physical `location`
+   (`address`/`city`/`state`/`postal_code`); online gigs do not.
+   - **Online gigs have NO store to visit — never offer to find one.** A `stores[].store_name`
+     value (`Amazon`, `Target`, `Walmart`, …) is just the retailer the product is bought
+     *through*; on an online gig the member orders it online, so there is no location to drive
+     to. Do **not** offer "find your nearest <store>" for any gig that isn't `gig_type: "irl"`,
+     even when the member says they prefer in-store and even when `store_name` names a big-box
+     chain. If a member prefers in-store, point them at gigs whose `gig_type` is actually
+     `irl` — don't reframe an online gig as an in-store trip.
+   For a live (`irl`) gig, help them get to the store. Surface the store info by default when
+   you describe it.
    - **Never assume the member's location.** If you don't already know their city/ZIP (from
      the conversation or profile), **ask first** — one short question:
      *"What city or ZIP are you in? I'll find the closest one."* Don't guess or pick a random
@@ -151,6 +167,14 @@ or any gig ask without a clear available vs enrolled signal):
 - Product links: quote every `products[]` / `product_url` as `[Product Name](url)`.
   Never paraphrase, never reuse `gig_url`, and never stop at the first `buy_link`
   when more products exist.
+- **Never mention "the link" without providing it.** Saying *"order it with the
+  gig's link"* / *"use the buy link"* while showing no link is the #1 complaint —
+  the member is left with nothing to click. Any turn that references ordering
+  through a link must render the real `product_url` in that same message.
+- **Online gigs have no physical store** — store-finding is `gig_type: "irl"` only. A
+  `stores[].store_name` of `Amazon`/`Target`/`Walmart` on a non-`irl` gig is just where the
+  product is bought online, not a place to visit. Never offer "find your nearest <store>" for
+  an online gig, even if the member prefers in-store. Only `irl` gigs carry a `location`.
 - **Store locating:** never invent a store, address, or phone number; if a bare ZIP matches
   several stores, give the top match and note there are others. Hours online can be stale
   (say "confirm by phone" for "open now?"), and you can't see live inventory (say "call to
@@ -166,6 +190,8 @@ or any gig ask without a clear available vs enrolled signal):
   only when asked.
 - For a live gig, you gave the store info or asked for the member's location before searching,
   and the store reply had a real name, address, phone/store number, and hours.
+- You did **not** offer to find a physical store for a non-`irl` (online) gig, regardless of
+  its `stores[].store_name` or the member's in-store preference.
 - Available-gig answers excluded gigs the member is already in (`user_id` on
   `list_active_gigs`).
 - "Show me more" used `next_offset` from the prior page when more gigs existed.

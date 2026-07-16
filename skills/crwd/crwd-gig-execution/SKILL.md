@@ -5,7 +5,7 @@ version: 1.0.0
 metadata:
   hermes:
     tags: [crwd, gig, execution, buy, product, ugc, content, proof, receipt, submission]
-    related_skills: [crwd-gig-discovery, crwd-payment-status, crwd-reference, crwd-handoff]
+    related_skills: [crwd-gig-discovery, crwd-payment-status, crwd-reference, crwd-handoff, crwd-proof-validator]
     requires_toolsets: [crwd]
     config:
       - key: crwd.app_base_url
@@ -44,6 +44,11 @@ skill (proof is just the tail of doing the gig).
    own line (clickable product name). Never substitute `gig_url`. Pass the member
    `user_id` from `[CRWD member]` context. Include buy links by default whenever
    a product is involved.
+   - **If you mention a link, show it.** Never say *"order it with the gig's
+     link"*, *"use the buy link"*, or *"order it through the link"* without the
+     real `product_url` rendered in that same message. A member can't click a link
+     you only described. Any turn that walks through buying/ordering a product must
+     paste the actual `[Product Name](product_url)` right there.
 4. **Live gig steps:** go to the store (see `crwd-gig-discovery` if they need to find it),
    buy the product, and **call out any special requirement precisely** — e.g. *two purchases
    with two different payment methods* means two separate transactions and two receipts.
@@ -51,10 +56,13 @@ skill (proof is just the tail of doing the gig).
    clearly, matching the gig's "approved concepts."
 5. **Online gig steps:** order the product (commonly Amazon) via the buy link, then leave a
    review per the gig's instructions.
-6. **Proof — tell them the exact format** so it isn't rejected:
+6. **Proof — tell them the exact format AND where it goes** so it isn't rejected.
+   Proof is submitted by uploading it **right here in this chat as a message/attachment** —
+   not in the CRWD app. Send them here to `crwd-proof-validator`, which owns the reply to a
+   submission.
    - Live: receipt photo (readable, showing the product), store location, and the UGC content
      link. Both receipts if there's a two-purchase requirement.
-   - Online: order screenshot + review screenshot.
+   - Online: order screenshot + review screenshot (and the review link).
    - Full detail: `skill_view("crwd-reference", "references/proof-requirements.md")`.
 7. **Check submission status** if they ask "did it go through?" — `get_user_receipts` shows
    receipt/proof validation state (pass/fail + reason).
@@ -67,6 +75,10 @@ skill (proof is just the tail of doing the gig).
   `references/payments-dot.md`). Don't imply they'll be refunded for the purchase.
 - Don't paraphrase a buy link or requirement — quote the real product URL and the exact
   requirement from the gig data.
+- **Never mention "the link" without providing it.** Telling the member to *"order
+  it with the gig's link"* while showing no link leaves them with nothing to click.
+  Any turn that references ordering through a link must render the real
+  `product_url` in that same message.
 - Rejected submissions always go to a human. Never coach a resubmission.
 - Never replace linked `name` / `gig_name` with a plain title or `Title — url` —
   paste the markdown field verbatim and do not append a bare URL.

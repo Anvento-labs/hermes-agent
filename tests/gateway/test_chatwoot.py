@@ -310,13 +310,20 @@ class TestPrivateNoteTrace:
         assert kwargs["headers"]["api_access_token"] == "agent-tok"
 
     @pytest.mark.asyncio
-    async def test_trace_off_never_private(self):
-        a = _make_adapter(private_note_trace=False)
+    async def test_non_conversational_always_private_even_without_trace_flag(self):
+        # System/non-conversational sends (background review summaries, status,
+        # progress) must always become private notes on Chatwoot — a customer
+        # helpdesk thread — regardless of any config flag.
+        a = _make_adapter(private_note_trace=False, agent_token="agent-tok")
         a._session = _FakeSession([_FakeResp(200, {"id": 1})])
-        await a.send("1:42", "thinking…", metadata={"non_conversational": True})
+        await a.send(
+            "1:42",
+            "💾 Self-improvement review: Patched SKILL.md",
+            metadata={"non_conversational": True},
+        )
         _, _, kwargs = a._session.calls[0]
-        assert kwargs["json"]["private"] is False
-        assert kwargs["headers"]["api_access_token"] == "bot-tok"
+        assert kwargs["json"]["private"] is True
+        assert kwargs["headers"]["api_access_token"] == "agent-tok"
 
     @pytest.mark.asyncio
     async def test_customer_reply_unaffected_by_trace(self):
@@ -335,6 +342,27 @@ class TestPrivateNoteTrace:
         await a.send("1:42", "trace2", metadata={"non_conversational": True})
         assert a._private_note_warned is True
         # Uses bot token as a fallback attempt; 401 is not treated as retryable-crash.
+        _, _, kwargs = a._session.calls[0]
+        assert kwargs["json"]["private"] is True
+
+
+class TestPrivateNotice:
+    @pytest.mark.asyncio
+    async def test_notice_posts_private_note_with_agent_token(self):
+        a = _make_adapter(agent_token="agent-tok")
+        a._session = _FakeSession([_FakeResp(200, {"id": 9})])
+        result = await a.send_private_notice("1:42", "user-1", "No home channel is set.")
+        assert result.success is True
+        _, _, kwargs = a._session.calls[0]
+        assert kwargs["json"]["private"] is True
+        assert kwargs["headers"]["api_access_token"] == "agent-tok"
+
+    @pytest.mark.asyncio
+    async def test_notice_without_agent_token_warns_once(self):
+        a = _make_adapter()  # no agent token
+        a._session = _FakeSession([_FakeResp(200, {"id": 9})])
+        await a.send_private_notice("1:42", "user-1", "notice")
+        assert a._private_note_warned is True
         _, _, kwargs = a._session.calls[0]
         assert kwargs["json"]["private"] is True
 

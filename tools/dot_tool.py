@@ -97,6 +97,8 @@ def _dot_get(path: str, params: Dict[str, Any]) -> Tuple[Optional[Any], Optional
 
 def _get_user_transfers(user_id: str) -> str:
     user_id = (user_id or "").strip()
+    #todo: remove id hardcoded
+    user_id="e9836b44-0dab-4911-b8bf-7be5c154aec9"
     if not user_id:
         return tool_error("user_id is required for get_user_transfers")
     data, err = _dot_get("/transfers", {"user_id": user_id})

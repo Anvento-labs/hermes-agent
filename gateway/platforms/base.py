@@ -3142,6 +3142,13 @@ class BasePlatformAdapter(ABC):
             metadata=metadata,
         )
 
+    # When True, the gateway always routes setup/operational notices through
+    # ``send_private_notice`` for this adapter, regardless of the
+    # ``notice_delivery`` config. Adapters whose notices must never reach an
+    # end user (e.g. Chatwoot, where the conversation is a customer helpdesk
+    # thread) opt in by setting this to True. Not a user-facing config knob.
+    notices_always_private: bool = False
+
     async def send_private_notice(
         self,
         chat_id: str,

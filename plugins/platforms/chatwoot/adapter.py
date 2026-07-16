@@ -7,8 +7,9 @@ Implements the integration described in ``docs/plans/CHATWOOT_INTEGRATION.md``:
   gateway ``MessageEvent`` and dispatched via ``handle_message``.
 - Outbound: replies are posted to Chatwoot's Application API, authenticating
   with the Agent Bot token in the ``api_access_token`` header.
-- Reasoning / tool + skill activity can be surfaced as agent-only **private
-  notes** (``private: true``) when ``CHATWOOT_PRIVATE_NOTE_TRACE`` is on.
+- Reasoning / tool + skill activity is surfaced as agent-only **private
+  notes** (``private: true``) by default; disable with
+  ``CHATWOOT_PRIVATE_NOTE_TRACE=false``.
 
 The adapter is a plugin: ``register(ctx)`` wires it into Hermes with zero core
 edits (aside from the shared non-conversational metadata marker used by the
@@ -72,8 +73,11 @@ def check_chatwoot_requirements() -> bool:
     return AIOHTTP_AVAILABLE
 
 
-def _bool_env(value: Any) -> bool:
-    return str(value or "").strip().lower() in ("1", "true", "yes", "on")
+def _bool_env(value: Any, default: bool = False) -> bool:
+    s = str(value if value is not None else "").strip().lower()
+    if s == "":
+        return default
+    return s in ("1", "true", "yes", "on")
 
 
 def _redact(token: Optional[str]) -> str:
@@ -217,6 +221,11 @@ class ChatwootAdapter(BasePlatformAdapter):
 
     MAX_MESSAGE_LENGTH = MAX_MESSAGE_LENGTH
 
+    # Chatwoot conversations are customer helpdesk threads. Setup/operational
+    # notices ("no home channel set", skill notices, etc.) must never post as a
+    # customer-facing reply — always route them to an agent-only private note.
+    notices_always_private = True
+
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform("chatwoot"))
         extra = config.extra or {}
@@ -245,10 +254,14 @@ class ChatwootAdapter(BasePlatformAdapter):
             extra.get("health_path", DEFAULT_HEALTH_PATH)
         )
         self._max_body_bytes: int = int(extra.get("max_body_bytes", DEFAULT_MAX_BODY_BYTES))
-        self._private_note_trace: bool = bool(
-            extra.get("private_note_trace")
-            or _bool_env(os.getenv("CHATWOOT_PRIVATE_NOTE_TRACE"))
-        )
+        # Default ON: reasoning/tool-progress goes to agent-only private notes
+        # unless explicitly disabled (config ``private_note_trace: false`` or
+        # ``CHATWOOT_PRIVATE_NOTE_TRACE=false``). System chatter should never be
+        # customer-facing by default on a helpdesk thread.
+        _trace_cfg = extra.get("private_note_trace")
+        if _trace_cfg is None:
+            _trace_cfg = os.getenv("CHATWOOT_PRIVATE_NOTE_TRACE")
+        self._private_note_trace: bool = _bool_env(_trace_cfg, default=True)
 
         self._runner = None  # aiohttp AppRunner
         self._session: Optional["aiohttp.ClientSession"] = None
@@ -564,15 +577,18 @@ class ChatwootAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        # Private-note trace: reasoning / tool progress arrives marked
-        # ``non_conversational`` (see gateway/run.py). When the trace is on,
-        # route those to an agent-only private note instead of a customer reply.
-        private = bool(metadata and metadata.get("non_conversational")) and self._private_note_trace
+        # Chatwoot conversations are customer helpdesk threads. Anything the
+        # gateway marks ``non_conversational`` (background self-improvement
+        # review summaries, tool/status progress, lifecycle notices — see
+        # gateway/run.py) must never surface as a customer-facing reply. Always
+        # route those to an agent-only private note. This is deliberately not
+        # gated on config: system chatter is never appropriate for a customer.
+        private = bool(metadata and metadata.get("non_conversational"))
         if private and not self._agent_token and not self._private_note_warned:
             logger.warning(
-                "[chatwoot] CHATWOOT_PRIVATE_NOTE_TRACE is on but CHATWOOT_AGENT_TOKEN "
-                "is unset; private notes will be attempted with the bot token and may "
-                "be rejected. Customer replies are unaffected."
+                "[chatwoot] Routing a system message to a private note but "
+                "CHATWOOT_AGENT_TOKEN is unset; the note will be attempted with "
+                "the bot token and may be rejected. Customer replies are unaffected."
             )
             self._private_note_warned = True
 
@@ -600,6 +616,49 @@ class ChatwootAdapter(BasePlatformAdapter):
         if result.success and not private:
             await self.stop_typing(chat_id)
         return result
+
+    async def send_private_notice(
+        self,
+        chat_id: str,
+        user_id: Optional[str],
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Deliver operational/setup notices as a Chatwoot private note.
+
+        Setup and operational messages (the "no home channel" prompt, skill
+        notices, cron-related notes, etc.) are routed here by the gateway when
+        ``gateway.platforms.chatwoot.notice_delivery: private``. Chatwoot has
+        native agent-only private notes, so post there instead of replying to
+        the customer. Uses the agent token when configured (private notes may
+        be rejected under the bot token).
+        """
+        if not self._agent_token and not self._private_note_warned:
+            logger.warning(
+                "[chatwoot] notice_delivery=private but CHATWOOT_AGENT_TOKEN is "
+                "unset; private notes will be attempted with the bot token and "
+                "may be rejected. Customer replies are unaffected."
+            )
+            self._private_note_warned = True
+
+        try:
+            account_id, conversation_id = self._parse_chat_id(chat_id)
+        except ValueError as exc:
+            return SendResult(success=False, error=str(exc))
+
+        chunks = self._split(content)
+        if not chunks:
+            return SendResult(success=True)
+
+        last: Optional[SendResult] = None
+        for chunk in chunks:
+            last = await self._post_message(
+                account_id, conversation_id, chunk, private=True
+            )
+            if not last.success:
+                return last
+        return last or SendResult(success=True)
 
     async def _post_message(
         self,
@@ -987,7 +1046,7 @@ def interactive_setup() -> None:
     token = prompt("Agent Bot access token", default=get_env_value("CHATWOOT_TOKEN") or "")
     if token:
         save_env_value("CHATWOOT_TOKEN", token)
-    if prompt_yes_no("Post reasoning/tool activity as private notes?", False):
+    if prompt_yes_no("Post reasoning/tool activity as private notes?", True):
         save_env_value("CHATWOOT_PRIVATE_NOTE_TRACE", "true")
         agent_token = prompt("Agent (user) token for private notes", default=get_env_value("CHATWOOT_AGENT_TOKEN") or "")
         if agent_token:

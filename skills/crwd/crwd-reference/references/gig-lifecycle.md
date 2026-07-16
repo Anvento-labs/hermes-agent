@@ -8,7 +8,8 @@ Every member goes through the same flow:
 3. **Get approved** — CRWD or the brand approves the application before the member can start.
 4. **Perform the gig** — see gig types below.
 5. **Submit proof** — receipts, screenshots, review links, UGC video/photo links, uploaded
-   to the CRWD dashboard.
+   **into the coach chat (this conversation) as messages/attachments**, where the
+   `crwd-proof-validator` skill reviews them. Proof is not uploaded in the CRWD app.
 6. **Get paid** — payment is triggered once proof is reviewed and verified.
 
 ## Gig types

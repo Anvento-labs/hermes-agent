@@ -26,6 +26,7 @@ def _make_runner(extra=None):
         }
     )
     adapter = MagicMock()
+    adapter.notices_always_private = False
     adapter.send = AsyncMock(return_value=SendResult(success=True, message_id="public-1"))
     adapter.send_private_notice = AsyncMock(return_value=SendResult(success=True, message_id="private-1"))
     runner.adapters = {Platform.SLACK: adapter}
@@ -65,3 +66,41 @@ async def test_deliver_platform_notice_uses_public_delivery_by_default():
 
     adapter.send.assert_awaited_once_with("C123", "hello", metadata={"thread_id": "111.222"})
     adapter.send_private_notice.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_adapter_forces_private_notice_without_config():
+    """Adapters that opt in (notices_always_private) route to private notes
+    even when no notice_delivery config is set."""
+    runner, adapter = _make_runner()
+    adapter.notices_always_private = True
+
+    await runner._deliver_platform_notice(_make_source(), "hello")
+
+    adapter.send_private_notice.assert_awaited_once_with(
+        "C123",
+        "U123",
+        "hello",
+        metadata={"thread_id": "111.222"},
+    )
+    adapter.send.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_adapter_forces_private_notice_even_without_user_id():
+    """A forced-private adapter still uses the private path when there is no
+    user_id (e.g. Chatwoot private notes are conversation-scoped)."""
+    runner, adapter = _make_runner()
+    adapter.notices_always_private = True
+    source = SessionSource(
+        platform=Platform.SLACK,
+        chat_id="C123",
+        chat_type="channel",
+        user_id=None,
+        thread_id="111.222",
+    )
+
+    await runner._deliver_platform_notice(source, "hello")
+
+    adapter.send_private_notice.assert_awaited_once()
+    adapter.send.assert_not_awaited()

@@ -11,6 +11,11 @@ common CRWD Coach intents.
 
 ``handoff-escalation`` is applied only when the agent calls ``crwd_handoff`` in
 the current turn (tracked via ``post_tool_call``), not from member message text.
+Once set, it is **sticky**: because labels are assigned with ``replace=True``
+every turn, a later turn that doesn't re-trigger handoff would otherwise wipe the
+tag. Handoff is a terminal, human-owned state, so the labeler re-reads the
+conversation's current labels and preserves ``handoff-escalation`` if a human
+hasn't cleared it.
 """
 
 from __future__ import annotations
@@ -482,6 +487,32 @@ def classify_conversation_labels(
     return _finalize_labels(matched, handoff_requested)
 
 
+def _conversation_has_handoff_label(account_id: str, conversation_id: str) -> bool:
+    """Return True if the conversation already carries ``handoff-escalation``.
+
+    Handoff is a terminal, human-owned state. Labels are assigned with
+    ``replace=True`` on every turn, so without this check a later turn that does
+    not re-trigger handoff would silently drop the tag ("added then removed").
+    Best-effort — any lookup failure returns False so labeling still proceeds.
+    """
+    try:
+        from plugins.platforms.chatwoot.labels_tool import (
+            _api_request,
+            _extract_conversation_labels,
+        )
+
+        ok, data, _err = _api_request(
+            "GET",
+            f"/api/v1/accounts/{account_id}/conversations/{conversation_id}/labels",
+        )
+        if not ok:
+            return False
+        return "handoff-escalation" in _extract_conversation_labels(data)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("[chatwoot-labels-auto] handoff-sticky lookup failed: %s", exc)
+        return False
+
+
 def auto_label_conversation(
     user_message: str = "",
     conversation_history: Optional[Sequence[Any]] = None,
@@ -496,11 +527,17 @@ def auto_label_conversation(
     if not account_id or not conversation_id:
         return {"success": False, "skipped": True, "reason": "no chatwoot conversation"}
 
+    # Handoff is sticky: preserve an existing escalation tag even when this turn
+    # didn't call crwd_handoff, so the replace=True assign below can't wipe it.
+    sticky_handoff = handoff_requested or _conversation_has_handoff_label(
+        account_id, conversation_id
+    )
+
     labels = classify_conversation_labels(
         user_message,
         conversation_history,
         contact_id=contact_id,
-        handoff_requested=handoff_requested,
+        handoff_requested=sticky_handoff,
     )
     bootstrap = _create_labels_if_not_exists(account_id)
     if not bootstrap.get("success") and not bootstrap.get("existing"):
