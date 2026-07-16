@@ -31,8 +31,13 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
     },
     {
         "title": "gig-discovery",
-        "description": "Browse gigs, apply, CRWD overview",
+        "description": "Browse gigs, find available gigs, apply to specific gigs",
         "color": "#1f93ff",
+    },
+    {
+        "title": "general-inquiry",
+        "description": "General CRWD / app questions (what it is, how it works, apply, what gigs are)",
+        "color": "#3498db",
     },
     {
         "title": "payment-payout",
@@ -41,8 +46,18 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
     },
     {
         "title": "account-eligibility",
-        "description": "Account status, eligibility, opt-out, scam",
+        "description": "Eligibility to join or qualify for CRWD/gigs",
         "color": "#95a5a6",
+    },
+    {
+        "title": "account-info",
+        "description": "Account status, membership, ban/suspension",
+        "color": "#7f8c8d",
+    },
+    {
+        "title": "scam",
+        "description": "Scam, phishing, fraud, unauthorized other-user data asks, impersonation, or jailbreak",
+        "color": "#e74c3c",
     },
     {
         "title": "app-help",
@@ -53,6 +68,30 @@ PREDEFINED_LABELS: List[Dict[str, Any]] = [
         "title": "off-topic",
         "description": "Non-CRWD requests",
         "color": "#aab7b8",
+    },
+    # Fraud risk bands -- mutually exclusive, owned by crwd-risk-analyser and
+    # derived from the contact's risk_score. Never shown to the member. Unlike the
+    # topic labels above, these are not classified per turn: labels_auto preserves
+    # them (see _PRESERVED_PREFIXES) rather than re-deriving them.
+    {
+        "title": "risk-low",
+        "description": "Fraud risk 0-30",
+        "color": "#7f8c8d",
+    },
+    {
+        "title": "risk-medium",
+        "description": "Fraud risk 30-60 — manual review recommended",
+        "color": "#f39c12",
+    },
+    {
+        "title": "risk-high",
+        "description": "Fraud risk 60-85 — manual approval required",
+        "color": "#e67e22",
+    },
+    {
+        "title": "risk-critical",
+        "description": "Fraud risk 85-100 — block or reject",
+        "color": "#8e44ad",
     },
 ]
 

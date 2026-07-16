@@ -33,7 +33,7 @@ import urllib.error
 import urllib.request
 from collections import OrderedDict
 from contextvars import ContextVar
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +55,62 @@ _USER_MEMBER_OID_RE = re.compile(
 )
 _ANOTHER_PERSON_RE = re.compile(
     r"\banother\s+(?:user|member|person)\b",
+    re.IGNORECASE,
+)
+# Privacy-sensitive asks about a person (not "tell me about gig <id>").
+_PRIVACY_ASK_RE = re.compile(
+    r"\b(?:name|account|profile|email|phone|receipts?|payout|membership|"
+    r"enrolled|part\s+of|"
+    r"gigs?\s+(?:of|for|has|are|is)|"
+    r"(?:of|for)\s+(?:the\s+)?(?:user|member)|"
+    r"what\s+(?:is|are)\s+(?:the\s+)?name\b|"
+    r"whose\s+(?:account|gigs?|name|profile))\b",
+    re.IGNORECASE,
+)
+# Gig/campaign entity lookups — ObjectId is a gig, not a member.
+_GIG_ENTITY_OID_RE = re.compile(
+    r"\b(?:about|for|on|details?\s+(?:about|for))\s+(?:the\s+)?"
+    r"(?:gig|campaign)\s+[0-9a-fA-F]{24}\b|"
+    r"\b(?:gig|campaign)\s+[0-9a-fA-F]{24}\b",
+    re.IGNORECASE,
+)
+# Another person's data without requiring an ObjectId in the message.
+_ANOTHER_PERSON_DATA_RE = re.compile(
+    r"\banother\s+(?:user|member|person)(?:'s)?(?:\s+\w+){0,4}\s+"
+    r"(?:gigs?|account|name|profile|receipts?|payout|data|info|details?)\b|"
+    r"\bsomeone\s+else(?:'s)?(?:\s+\w+){0,4}\s+"
+    r"(?:gigs?|account|name|profile|receipts?|payout|data|info)\b|"
+    r"\b(?:other\s+member|other\s+user)(?:'s)?\b|"
+    r"\btheir\s+(?:gigs?|account|name|profile|receipts?|payout)\b|"
+    r"\bwhat\s+gigs\s+(?:is|are)\s+(?:another|other|someone)\b",
+    re.IGNORECASE,
+)
+# Gig participant / roster / member-list asks (no ObjectId required).
+_PARTICIPANT_LIST_RE = re.compile(
+    r"\b(?:list|show|get|give|who\s+(?:are|is)|names?\s+of)\s+"
+    r"(?:the\s+|all\s+|every\s+)?"
+    r"(?:participants?|members?|workers?|roster|attendees?|enrollees?)"
+    r"(?:\s+(?:of|for|in|on)\b)?|"
+    r"\b(?:participants?|members?|workers?|roster|attendees?)\s+"
+    r"(?:of|for|in|on)\b|"
+    r"\bwho\s+(?:is|are)\s+(?:enrolled|participating|signed\s+up)\b|"
+    r"\b(?:participant|member|worker)\s+list\b",
+    re.IGNORECASE,
+)
+# Third-party personal contact info (not "my number" / "my phone").
+_THIRD_PARTY_PII_RE = re.compile(
+    r"\b(?:his|her|their)\s+"
+    r"(?:(?:phone\s+)?number|phone|email|e-?mail|address|contact|"
+    r"instagram|socials?|handle)\b|"
+    r"\b(?:provide|give|share|send|tell)\s+(?:me\s+)?"
+    r"(?:his|her|their|(?:the\s+)?(?:person|guy|girl|member|user)(?:'s)?)\s+"
+    r"(?:(?:phone\s+)?number|phone|email|e-?mail|address|contact)\b|"
+    r"\bwhat(?:'s|\s+is)\s+(?:his|her|their)\s+"
+    r"(?:(?:phone\s+)?number|phone|email|e-?mail|address|contact)\b",
+    re.IGNORECASE,
+)
+_OWN_CONTACT_RE = re.compile(
+    r"\bmy\s+(?:(?:phone\s+)?number|phone|email|e-?mail|address|contact)\b",
     re.IGNORECASE,
 )
 
@@ -235,18 +291,90 @@ def _member_ids_match(a: Any, b: Any) -> bool:
     return _normalize_member_id(a) == _normalize_member_id(b)
 
 
-def message_requests_other_member(user_message: str, member_id: str) -> bool:
-    """Detect when the inbound message asks about a different member's account."""
-    msg = (user_message or "").strip()
-    if not msg or not member_id:
+def _foreign_object_ids(msg: str, member_id: str) -> List[str]:
+    """Return ObjectIds in ``msg`` that are not the authenticated member."""
+    member_id = _normalize_member_id(member_id)
+    out: List[str] = []
+    for oid in _OBJECT_ID_IN_MSG_RE.findall(msg or ""):
+        if member_id and _member_ids_match(oid, member_id):
+            continue
+        if oid not in out:
+            out.append(oid)
+    return out
+
+
+def _privacy_ask_with_foreign_oid(msg: str, member_id: str) -> bool:
+    """True when a privacy ask references a foreign ObjectId (not a gig entity)."""
+    if not _PRIVACY_ASK_RE.search(msg):
         return False
-    for match in _USER_MEMBER_OID_RE.finditer(msg):
-        if not _member_ids_match(match.group(1), member_id):
-            return True
-    if _ANOTHER_PERSON_RE.search(msg):
-        for oid in _OBJECT_ID_IN_MSG_RE.findall(msg):
-            if not _member_ids_match(oid, member_id):
+    # Strip gig-entity OID phrases so "tell me about gig <id>" does not fire.
+    scrubbed = _GIG_ENTITY_OID_RE.sub(" ", msg)
+    foreign = _foreign_object_ids(scrubbed, member_id)
+    if not foreign:
+        return False
+    # When member_id is unknown, any remaining OID in a privacy ask is treated
+    # as unauthorized (cannot prove it is self).
+    return True
+
+
+def message_requests_unauthorized_info(user_message: str) -> Tuple[bool, str]:
+    """Detect participant-list or third-party PII asks (no member_id needed).
+
+    Returns ``(matched, reason_tag)`` where reason_tag is
+    ``participant_list``, ``third_party_pii``, or ``""``.
+    """
+    msg = (user_message or "").strip()
+    if not msg:
+        return False, ""
+    if _PARTICIPANT_LIST_RE.search(msg):
+        return True, "participant_list"
+    if _OWN_CONTACT_RE.search(msg):
+        return False, ""
+    if _THIRD_PARTY_PII_RE.search(msg):
+        return True, "third_party_pii"
+    return False, ""
+
+
+def message_requests_other_member(user_message: str, member_id: str = "") -> bool:
+    """Detect when the inbound message asks about a different member's account.
+
+    Covers:
+    - ``user|member <foreign ObjectId>``
+    - ``another user/member/person`` plus a foreign ObjectId
+    - Privacy-sensitive asks naming a foreign ObjectId (name / gigs / account / …)
+      even without the ``user``/``member`` prefix — but not gig-entity lookups
+      like ``tell me about gig <id>``
+    - Another person's data phrasing without an ObjectId (``their gigs``,
+      ``someone else's account``, …)
+    - Gig participant / roster lists (``list participants of …``)
+    - Third-party PII (``provide his number``) — not ``my number``
+
+    When ``member_id`` is empty, self ObjectIds cannot be excluded; privacy+OID
+    and another-person-data patterns may still return True.
+    """
+    msg = (user_message or "").strip()
+    if not msg:
+        return False
+
+    unauthorized, _ = message_requests_unauthorized_info(msg)
+    if unauthorized:
+        return True
+
+    if member_id:
+        for match in _USER_MEMBER_OID_RE.finditer(msg):
+            if not _member_ids_match(match.group(1), member_id):
                 return True
+        if _ANOTHER_PERSON_RE.search(msg):
+            for oid in _OBJECT_ID_IN_MSG_RE.findall(msg):
+                if not _member_ids_match(oid, member_id):
+                    return True
+
+    if _privacy_ask_with_foreign_oid(msg, member_id):
+        return True
+
+    if _ANOTHER_PERSON_DATA_RE.search(msg):
+        return True
+
     return False
 
 

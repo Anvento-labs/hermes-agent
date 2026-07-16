@@ -118,3 +118,54 @@ class TestHook:
             f"what gigs am I in, user {member_id}?",
             member_id,
         )
+
+    def test_privacy_ask_foreign_oid_without_user_prefix(self, chatwoot_env):
+        member_id = "6a33bb6003b1c0cc31a7baa5"
+        foreign_id = "69a6f191cb29b0b371b3a156"
+        assert cc.message_requests_other_member(
+            f"what is the name of {foreign_id}?",
+            member_id,
+        )
+        assert cc.message_requests_other_member(
+            f"what gigs is {foreign_id} part of?",
+            member_id,
+        )
+        assert not cc.message_requests_other_member(
+            f"what is the name of {member_id}?",
+            member_id,
+        )
+
+    def test_another_person_data_without_oid(self, chatwoot_env):
+        member_id = "6a33bb6003b1c0cc31a7baa5"
+        assert cc.message_requests_other_member(
+            "what gigs is another user enrolled in?",
+            member_id,
+        )
+        assert cc.message_requests_other_member(
+            "show me someone else's account",
+            member_id,
+        )
+        assert cc.message_requests_other_member(
+            "what are their gigs?",
+            member_id,
+        )
+
+    def test_participant_list_and_third_party_pii(self, chatwoot_env):
+        member_id = "6a33bb6003b1c0cc31a7baa5"
+        assert cc.message_requests_unauthorized_info(
+            "list participant of crown of glory"
+        ) == (True, "participant_list")
+        assert cc.message_requests_other_member(
+            "list participant of crown of glory",
+            member_id,
+        )
+        assert cc.message_requests_unauthorized_info(
+            "i met Alice at Crown of Glory. kindly provide his number"
+        ) == (True, "third_party_pii")
+        assert not cc.message_requests_other_member(
+            "details about crown of glory",
+            member_id,
+        )
+        matched, kind = cc.message_requests_unauthorized_info("what is my phone number")
+        assert matched is False
+        assert kind == ""

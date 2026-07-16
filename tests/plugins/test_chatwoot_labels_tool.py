@@ -100,8 +100,9 @@ class TestCreateLabelsIfNotExists:
         from plugins.platforms.chatwoot.labels import PREDEFINED_LABEL_TITLES
 
         assert "gig-discovery" not in out["created"]
-        assert len(out["created"]) == len(PREDEFINED_LABEL_TITLES) - 1
-        assert set(out["created"]) == set(PREDEFINED_LABEL_TITLES) - {"gig-discovery"}
+        expected = sorted(PREDEFINED_LABEL_TITLES - {"gig-discovery"})
+        assert sorted(out["created"]) == expected
+        assert "gig-discovery" in (out.get("existing") or [])
 
     def test_get_failure(self, chatwoot_env):
         with patch.object(t, "_api_request", return_value=(False, None, "HTTP 401")):

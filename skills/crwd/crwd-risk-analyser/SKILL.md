@@ -135,16 +135,16 @@ conversation at once. So **pass the topic labels through too** (`proof-submissio
 `handoff-escalation`, …). Read them first with `get_all_labels` if you're unsure
 what's there.
 
-> **Known limitation — the band label does not persist yet.** `risk-*` is not in the
-> Chatwoot plugin's predefined label set, and the automatic labeler re-assigns
-> labels with `replace=true` on every turn from that set only. So a band you apply
-> now is wiped on the next message. Apply it anyway — the call is correct and will
-> start sticking once the plugin work lands. **The score itself is unaffected**:
-> `custom_attributes.risk_score` on the contact is the durable record, and the band
-> is always re-derivable from it. Never treat a missing label as a missing score.
+The band **persists across turns**: the automatic labeler re-assigns labels with
+`replace=true` every turn from its own classification, and preserves `risk-*`
+rather than clearing it. So set the band once and it stays until you change it.
 
-Crossing into `risk-high` or `risk-critical` → `crwd_handoff` as well. That note is
-what a human actually sees today, so it carries the weight the label can't.
+Even so, **the score is the record, not the label**. `custom_attributes.risk_score`
+on the contact is durable; the band is only ever a view of it, and is always
+re-derivable. Never treat a missing label as a missing score.
+
+Crossing into `risk-high` or `risk-critical` → `crwd_handoff` as well. A member at
+that level should not be left to the bot.
 
 ### 6. Scam signals — not a proof
 
@@ -157,7 +157,8 @@ Score `+50` when the member is clearly abusing the channel:
 **This cannot be recorded on the proof table** — `store_proof` requires a real
 `proof_type` and a normalizable id, and a scam message has neither. The score *is*
 the record. So: `crwd_risk_score(delta=50, reason="scam signals")`, `crwd_handoff`,
-and label `account-eligibility` + `handoff-escalation` alongside the band.
+and let the labeler tag it — it classifies `scam` itself from the message, so you
+don't need to apply that label; just set the band.
 
 Be conservative. A confused member pasting a weird link is not a scammer; a member
 asking an off-topic question is `off-topic`, not fraud. Score this when you'd be

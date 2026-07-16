@@ -1534,6 +1534,15 @@ DEFAULT_CONFIG = {
             "extra_body": {},
             "language": "",
         },
+        # Chatwoot inbox label classification (low-confidence fallback only).
+        "chatwoot_labels": {
+            "provider": "auto",
+            "model": "",
+            "base_url": "",
+            "api_key": "",
+            "timeout": 15,
+            "extra_body": {},
+        },
         "tts_audio_tags": {
             "provider": "auto",
             "model": "",
@@ -1795,7 +1804,14 @@ DEFAULT_CONFIG = {
             "telegram": {"streaming": True},
             "discord": {"streaming": False},
             # Customer-facing support widget: final answer only, no mid-turn narration.
-            "chatwoot": {"interim_assistant_messages": False},
+            "chatwoot": {
+                "interim_assistant_messages": False,
+                # Auto conversation labels (plugin/platforms/chatwoot/labels_auto.py)
+                "labels": {
+                    # When tools+heuristics are low-confidence, call auxiliary.chatwoot_labels
+                    "llm_fallback": True,
+                },
+            },
         },
         # Gateway runtime-metadata footer appended to the FINAL message of a turn
         # (disabled by default to keep replies minimal). When enabled, renders

@@ -15510,7 +15510,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 _adapter = self.adapters.get(source.platform)
                 if _adapter:
                     _pause_typing_before_finalize = None
-                    if source.platform == Platform.TELEGRAM and hasattr(_adapter, "pause_typing_for_chat"):
+                    if (
+                        source.platform == Platform.TELEGRAM
+                        or getattr(source.platform, "value", None) == "chatwoot"
+                    ) and hasattr(_adapter, "pause_typing_for_chat"):
                         def _pause_typing_before_finalize(
                             _adapter=_adapter,
                             _chat_id=source.chat_id,
@@ -16725,7 +16728,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                     _adapter = self.adapters.get(source.platform)
                     if _adapter:
                         _pause_typing_before_finalize = None
-                        if source.platform == Platform.TELEGRAM and hasattr(_adapter, "pause_typing_for_chat"):
+                        if (
+                            source.platform == Platform.TELEGRAM
+                            or getattr(source.platform, "value", None) == "chatwoot"
+                        ) and hasattr(_adapter, "pause_typing_for_chat"):
                             def _pause_typing_before_finalize(
                                 _adapter=_adapter,
                                 _chat_id=source.chat_id,

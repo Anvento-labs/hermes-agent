@@ -404,6 +404,21 @@ class TestTypingIndicator:
         _, typing_url, typing_kwargs = a._session.calls[1]
         assert typing_url.endswith("/toggle_typing_status")
         assert typing_kwargs["json"]["typing_status"] == "off"
+        # Pause blocks _keep_typing from re-arming Thinking after the reply.
+        assert "1:42" in a._typing_paused
+
+    @pytest.mark.asyncio
+    async def test_attachment_send_pauses_and_clears_typing(self, tmp_path):
+        a = _make_adapter(agent_token="agent-tok")
+        a._session = _FakeSession([_FakeResp(200), _FakeResp(200)])
+        path = tmp_path / "shot.png"
+        path.write_bytes(b"png")
+        result = await a._post_attachment("1:42", str(path), caption="here")
+        assert result.success is True
+        assert "1:42" in a._typing_paused
+        typing_calls = [c for c in a._session.calls if "toggle_typing_status" in c[1]]
+        assert typing_calls
+        assert typing_calls[-1][2]["json"]["typing_status"] == "off"
 
     @pytest.mark.asyncio
     async def test_private_note_send_does_not_clear_typing(self):
@@ -602,11 +617,22 @@ class _MockCtx:
 
     manifest = _M()
     _manager = type("_Mgr", (), {"_plugin_platform_names": set()})()
+    hooks = []
+    middlewares = []
 
     def register_platform(self, **kwargs):
         from gateway.platform_registry import PlatformEntry
 
         self.entry = PlatformEntry(source="plugin", **kwargs)
+
+    def register_hook(self, name, fn):
+        self.hooks.append((name, fn))
+
+    def register_middleware(self, name, fn):
+        self.middlewares.append((name, fn))
+
+    def register_tool(self, *args, **kwargs):
+        return None
 
 
 class TestRegistration:
