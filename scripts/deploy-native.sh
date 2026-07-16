@@ -17,9 +17,9 @@
 # ssm send-command; the source and config travel as short-lived S3 presigned
 # URLs, so the instance needs no S3 permission of its own.
 #
-# Staging config is ~/.hermes-staging (CONFIG_DIR), NOT ~/.hermes. The local
-# ~/.hermes runs a live gateway on a different Chatwoot bot and is never read
-# from or written to by this script.
+# Staging mirrors ~/.hermes exactly. That directory is treated as READ-ONLY:
+# a live local gateway runs from it, so this script copies out of it and never
+# writes to it. Set CONFIG_DIR to diverge staging from local.
 #
 # Prerequisite you must do once (it grants Bedrock access to the box; the
 # gateway starts without it but fails on the first message):
@@ -35,11 +35,12 @@ set -euo pipefail
 
 INSTANCE_ID="${INSTANCE_ID:-i-0fd88a62ed130dcdb}"
 AWS_REGION="${AWS_REGION:-us-east-2}"
-# Staging config lives HERE, not in ~/.hermes. The local ~/.hermes runs a live
-# gateway against a different Chatwoot bot; the two are meant to diverge, so
-# this script must never read staging values out of it or write anything into
-# it. Seed this dir once (see preflight), then edit it for staging only.
-CONFIG_DIR="${CONFIG_DIR:-$HOME/.hermes-staging}"
+# Staging mirrors the local config exactly: ~/.hermes is the source of truth.
+# READ-ONLY — this script copies out of it and never writes to it, because a
+# live local gateway runs from that directory. If staging ever needs to differ
+# (e.g. its own Chatwoot bot token), point CONFIG_DIR at a separate dir rather
+# than editing ~/.hermes.
+CONFIG_DIR="${CONFIG_DIR:-$HOME/.hermes}"
 S3_BUCKET="${S3_BUCKET:-cdk-hnb659fds-assets-079110101908-us-east-2}"
 S3_PREFIX="${S3_PREFIX:-hermes-deploy}"
 APP_DIR="${APP_DIR:-/opt/hermes-agent}"
@@ -112,16 +113,8 @@ command -v jq >/dev/null || die "jq is required"
 [ -f pyproject.toml ] || die "not at the repo root"
 aws sts get-caller-identity >/dev/null 2>&1 || die "no working AWS credentials"
 
-if [ ! -f "$CONFIG_DIR/.env" ] || [ ! -f "$CONFIG_DIR/config.yaml" ]; then
-  die "$CONFIG_DIR/{.env,config.yaml} not found.
-Seed it once from your local config, then edit it for staging:
-
-  mkdir -p $CONFIG_DIR
-  cp ~/.hermes/.env ~/.hermes/config.yaml $CONFIG_DIR/
-
-Then set the staging values in $CONFIG_DIR/.env (CHATWOOT_TOKEN for the
-staging bot, CHATWOOT_WEBHOOK_SECRET, etc). ~/.hermes is never written to."
-fi
+[ -f "$CONFIG_DIR/.env" ] || die "$CONFIG_DIR/.env not found"
+[ -f "$CONFIG_DIR/config.yaml" ] || die "$CONFIG_DIR/config.yaml not found"
 
 # Bedrock is what the gateway answers with; warn early if the role can't call it.
 if ! aws iam get-role-policy --role-name icrwd-chatwoot-ec2-staging \
