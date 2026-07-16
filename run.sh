@@ -23,7 +23,7 @@
 set -euo pipefail
 
 BRANCH="${BRANCH:-feat/crwd-proof-validator-and-risk-score}"
-EXTRAS="${EXTRAS:-messaging,bedrock,mongodb,cli}"
+EXTRAS="${EXTRAS:-messaging,bedrock,cli}"
 
 cd "$(dirname "$0")"
 
@@ -47,6 +47,13 @@ export PATH="$HOME/.local/bin:$PATH"
 echo "==> Installing dependencies (uv sync, extras: ${EXTRAS})"
 # --frozen: exactly what uv.lock pins, same as the Dockerfile build.
 uv sync --frozen $(printf -- '--extra %s ' ${EXTRAS//,/ })
+
+# pymongo can't ride the lockfile: the `mongodb` extra was added to
+# pyproject.toml without re-locking, and the lock can't currently be
+# regenerated (the aiohttp CVE bump to 3.14.1 in messaging/matrix conflicts
+# with the 3.13.4 pins in homeassistant/sms/teams, so `uv lock` fails).
+# Install it explicitly at the version the extra pins.
+uv pip install pymongo==4.11.3
 
 echo "==> Starting gateway (HERMES_HOME=$HOME/.hermes)"
 exec .venv/bin/hermes gateway run
