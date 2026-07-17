@@ -95,9 +95,11 @@ class TestCreateLabelsIfNotExists:
         with patch.object(t, "_api_request", side_effect=fake_api):
             out = t._create_labels_if_not_exists("1")
 
-        assert "gig-discovery" not in out["created"]
+        # Derive the count from the constant: hardcoding it went stale the last
+        # time a label was added, and the assertion silently drifted.
         from plugins.platforms.chatwoot.labels import PREDEFINED_LABEL_TITLES
 
+        assert "gig-discovery" not in out["created"]
         expected = sorted(PREDEFINED_LABEL_TITLES - {"gig-discovery"})
         assert sorted(out["created"]) == expected
         assert "gig-discovery" in (out.get("existing") or [])

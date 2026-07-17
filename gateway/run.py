@@ -8214,8 +8214,15 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         if config and hasattr(config, "get_notice_delivery"):
             notice_delivery = config.get_notice_delivery(source.platform)
 
+        # Adapters can force notices to always be private (e.g. Chatwoot, where
+        # setup/operational notices must never surface as customer-facing
+        # replies). This is an adapter-level default, not a user config knob.
+        adapter_forces_private = bool(getattr(adapter, "notices_always_private", False))
+
         metadata = self._thread_metadata_for_source(source)
-        if notice_delivery == "private" and getattr(source, "user_id", None):
+        if (notice_delivery == "private" or adapter_forces_private) and (
+            getattr(source, "user_id", None) or adapter_forces_private
+        ):
             try:
                 result = await adapter.send_private_notice(
                     source.chat_id,

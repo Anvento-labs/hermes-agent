@@ -66,6 +66,10 @@ screen fast.
   small chat widget — no long tours.
 - If their account state contradicts what they expect (e.g. a gig they think is active shows
   expired), check `crwd_db` before explaining, and hand off if it's a real discrepancy.
+- **Proof is not submitted in the app.** If they ask where to upload a receipt, review, or
+  other proof, don't point them to an app screen — proof is uploaded **right here in this
+  chat as a message/attachment**, where `crwd-proof-validator` reviews it. Use the app only
+  for browsing/finding gigs and opening gig details.
 
 ## Verification
 

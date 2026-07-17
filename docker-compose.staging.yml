@@ -1,0 +1,31 @@
+#
+# docker-compose.staging.yml — gateway only, pulled from ECR.
+#
+# Deployed by scripts/deploy-staging.sh, which copies this file to the EC2
+# box and runs it there. The dashboard service from docker-compose.yml is
+# deliberately absent: staging runs the Chatwoot gateway and nothing else.
+#
+# Usage on the box:
+#   IMAGE_TAG=<sha> HERMES_UID=$(id -u) HERMES_GID=$(id -g) \
+#     docker compose -f docker-compose.staging.yml up -d
+#
+# Keep `/init` as the image's ENTRYPOINT — it is s6-overlay's PID 1 and runs
+# the cont-init.d scripts (chown, profile reconcile) before any service
+# starts. Bypassing it skips that setup and the gateway will not work.
+#
+services:
+  gateway:
+    image: ${ECR_IMAGE:-079110101908.dkr.ecr.us-east-2.amazonaws.com/hermes-agent}:${IMAGE_TAG:-latest}
+    container_name: hermes
+    restart: unless-stopped
+    # host networking: the Chatwoot webhook listener binds :8647 on the host,
+    # reachable by a Chatwoot running on this same box without publishing it.
+    network_mode: host
+    volumes:
+      - ~/.hermes:/opt/data
+    environment:
+      # Must match the host user that owns ~/.hermes, or the container writes
+      # files the host can't read. deploy-staging.sh passes the real values.
+      - HERMES_UID=${HERMES_UID:-1000}
+      - HERMES_GID=${HERMES_GID:-1000}
+    command: ["gateway", "run"]

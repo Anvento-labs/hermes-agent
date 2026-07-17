@@ -1240,6 +1240,8 @@ class TestAutoLabelConversation:
 
     def test_applies_labels(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_conversation_has_handoff_label", return_value=False,
+        ), patch.object(
             auto, "_create_labels_if_not_exists",
             return_value={"success": True, "existing": ["proof-submission"]},
         ), patch.object(
@@ -1254,6 +1256,113 @@ class TestAutoLabelConversation:
         assign.assert_called_once_with("1", "42", ["proof-submission"], replace=True)
         assert "confidence" in out
         assert "reasons" in out
+
+    def test_sticky_handoff_preserved_on_later_turn(self, chatwoot_env):
+        """A conversation already escalated keeps handoff-escalation even when
+        the current turn doesn't call crwd_handoff (regression: add-then-remove)."""
+        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_preserved_labels", return_value=["handoff-escalation"],
+        ), patch.object(
+            auto, "_create_labels_if_not_exists",
+            return_value={"success": True, "existing": ["payment-payout"]},
+        ), patch.object(
+            auto, "_member_has_active_gigs", return_value=(False, set()),
+        ), patch.object(
+            auto, "_llm_fallback_enabled", return_value=False,
+        ), patch.object(
+            auto, "_assign_labels",
+            return_value={"success": True, "labels": [], "error": None},
+        ) as assign:
+            # No handoff_requested this turn — just a follow-up message.
+            out = auto.auto_label_conversation("ok thank you", handoff_requested=False)
+        assert "handoff-escalation" in out["classified"]
+        assert "handoff-escalation" in assign.call_args[0][2]
+        assert assign.call_args[1]["replace"] is True
+
+    def test_risk_band_survives_a_later_turn(self, chatwoot_env):
+        """The risk band is owned by crwd-risk-analyser and never classified here,
+        so replace=True would wipe it without preservation."""
+        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_preserved_labels", return_value=["risk-high"],
+        ), patch.object(
+            auto, "_create_labels_if_not_exists",
+            return_value={"success": True, "existing": []},
+        ), patch.object(
+            auto, "_member_has_active_gigs", return_value=(False, set()),
+        ), patch.object(
+            auto, "_llm_fallback_enabled", return_value=False,
+        ), patch.object(
+            auto, "_assign_labels",
+            return_value={"success": True, "labels": [], "error": None},
+        ) as assign:
+            auto.auto_label_conversation("ok thanks", handoff_requested=False)
+        assert "risk-high" in assign.call_args[0][2]
+
+    def test_gig_complete_survives_a_later_turn(self, chatwoot_env):
+        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_preserved_labels", return_value=["gig-complete"],
+        ), patch.object(
+            auto, "_create_labels_if_not_exists",
+            return_value={"success": True, "existing": []},
+        ), patch.object(
+            auto, "_member_has_active_gigs", return_value=(False, set()),
+        ), patch.object(
+            auto, "_llm_fallback_enabled", return_value=False,
+        ), patch.object(
+            auto, "_assign_labels",
+            return_value={"success": True, "labels": [], "error": None},
+        ) as assign:
+            auto.auto_label_conversation("ok thanks", handoff_requested=False)
+        assert "gig-complete" in assign.call_args[0][2]
+
+    def test_preserved_labels_stay_out_of_the_sticky_topic_memory(self, chatwoot_env):
+        """Preserved labels must not be absorbed into the topic cache, or the
+        classifier would re-emit them as topics forever."""
+        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_preserved_labels", return_value=["risk-high", "gig-complete"],
+        ), patch.object(
+            auto, "_create_labels_if_not_exists",
+            return_value={"success": True, "existing": []},
+        ), patch.object(
+            auto, "_member_has_active_gigs", return_value=(False, set()),
+        ), patch.object(
+            auto, "_llm_fallback_enabled", return_value=False,
+        ), patch.object(
+            auto, "_assign_labels",
+            return_value={"success": True, "labels": [], "error": None},
+        ), patch.object(auto, "_store_sticky_topics") as store:
+            auto.auto_label_conversation("ok thanks", handoff_requested=False)
+        stored = store.call_args[0][2]
+        assert "risk-high" not in stored
+        assert "gig-complete" not in stored
+
+
+class TestPreservedLabels:
+    def test_only_preserves_owned_labels(self):
+        payload = {"payload": ["payment-payout", "handoff-escalation", "risk-high",
+                               "gig-complete", "off-topic"]}
+        with patch("plugins.platforms.chatwoot.labels_tool._api_request",
+                   return_value=(True, payload, "")):
+            out = auto._preserved_labels("1", "42")
+        # Topic labels are re-derived each turn and must NOT be carried over --
+        # that would defeat "stale topics drop on high-conf switches".
+        assert sorted(out) == ["gig-complete", "handoff-escalation", "risk-high"]
+
+    def test_any_risk_band_matches_by_prefix(self):
+        for band in ("risk-low", "risk-medium", "risk-high", "risk-critical"):
+            with patch("plugins.platforms.chatwoot.labels_tool._api_request",
+                       return_value=(True, {"payload": [band]}, "")):
+                assert auto._preserved_labels("1", "42") == [band]
+
+    def test_lookup_failure_is_not_fatal(self):
+        with patch("plugins.platforms.chatwoot.labels_tool._api_request",
+                   return_value=(False, None, "HTTP 500")):
+            assert auto._preserved_labels("1", "42") == []
+
+    def test_exception_is_not_fatal(self):
+        with patch("plugins.platforms.chatwoot.labels_tool._api_request",
+                   side_effect=RuntimeError("boom")):
+            assert auto._preserved_labels("1", "42") == []
 
 
 class TestAutoLabelHook:

@@ -375,3 +375,75 @@ class TestGetUserGigStatusAction:
             t.crwd_db_tool({"action": "get_user_gigs", "user_id": "abc"})
         filt = mock_members.find.call_args[0][0]
         assert "$and" in filt
+
+
+class TestNextStepNeverSendsProofToTheApp:
+    """Proof is submitted in the coach chat, never in the CRWD app. These strings
+    are emitted by the tool, so no skill can override them -- a member sent to the
+    app hunts for a Submit Proof button that does not exist."""
+
+    def _stage(self, **over):
+        membership = {"isAccepted": True, "isApproved": True}
+        membership.update(over.pop("membership", {}))
+        gig = {"name": "Self Obsessed", "gig_type": "web_based"}
+        gig.update(over.pop("gig", {}))
+        return t.compute_gig_stage(
+            membership, gig,
+            purchases=over.get("purchases", []),
+            store_orders=over.get("store_orders", []),
+            product_reviews=over.get("product_reviews", []),
+            order_receipt_reviews=over.get("order_receipt_reviews", []),
+        )
+
+    def test_web_need_receipt_points_at_the_chat(self):
+        out = self._stage(purchases=[{"product_name": "Gummy"}])
+        assert out["stage"] == "need_receipt"
+        assert "in the app" not in out["next_step"]
+        assert "chat" in out["next_step"]
+
+    def test_irl_need_receipt_points_at_the_chat(self):
+        out = self._stage(gig={"gig_type": "irl"}, purchases=[{"product_name": "X"}])
+        assert "in the app" not in out["next_step"]
+        assert "chat" in out["next_step"]
+
+    def test_buying_still_points_at_the_app_buy_link(self):
+        # Buying DOES happen via the app's buy link -- only proof moved to chat.
+        out = self._stage(purchases=[])
+        assert out["stage"] == "need_purchase"
+        assert "in the app" in out["next_step"]
+
+
+class TestProductAssignedIsNotAPurchase:
+    """user_product_purchases rows are written at join-approval (every row is
+    source: "join_approved"), so they record which product a member MAY buy -- not
+    that they bought it. Calling the flag purchase_confirmed made the coach tell a
+    member "the system registered that you ordered the product"."""
+
+    def test_flag_is_named_for_what_it_means(self):
+        out = t.compute_gig_stage(
+            {"isAccepted": True, "isApproved": True},
+            {"name": "Self Obsessed", "gig_type": "web_based"},
+            purchases=[{"product_name": "Gummy", "source": "join_approved"}],
+            store_orders=[], product_reviews=[], order_receipt_reviews=[],
+        )
+        assert out["progress"]["product_assigned"] is True
+        # The old name is a claim the data cannot support.
+        assert "purchase_confirmed" not in out["progress"]
+
+    def test_join_approved_alone_never_claims_a_purchase(self):
+        # A member approved 10 seconds ago who has bought nothing still gets a
+        # user_product_purchases row. Nothing in the payload may say otherwise.
+        out = t.compute_gig_stage(
+            {"isAccepted": True, "isApproved": True},
+            {"name": "Self Obsessed", "gig_type": "web_based"},
+            purchases=[{"product_name": "Gummy", "source": "join_approved"}],
+            store_orders=[], product_reviews=[], order_receipt_reviews=[],
+        )
+        blob = json.dumps(out).lower()
+        assert "purchase is confirmed" not in blob
+        assert "purchase_confirmed" not in blob
+
+    def test_tool_description_warns_against_the_misread(self):
+        desc = t.CRWD_DB_SCHEMA["description"]
+        assert "product_assigned" in desc
+        assert "NOT evidence" in desc

@@ -138,3 +138,90 @@ class TestDotGet:
         assert err is None
         assert data == []
         assert captured["url"] == f"{t._DEFAULT_BASE_URL}/transfers?user_id=u1"
+
+
+class TestCreateUser:
+    _member = {
+        "action": "create_user",
+        "first_name": "Jane",
+        "last_name": "Doe",
+        "email": "jane@example.com",
+        "phone_number": "(415) 555-1234",
+        "country_code": "+1",
+    }
+
+    def test_returns_user_id_and_flags_new(self, dot_env):
+        with patch.object(t, "_dot_post", return_value=({"id": "dot-u-1"}, None)):
+            out = json.loads(t.dot_tool(dict(self._member)))
+        assert out["user_id"] == "dot-u-1"
+        assert out["user_is_new"] is True
+        assert out["error"] is None
+
+    def test_accepts_user_id_key_from_dot(self, dot_env):
+        with patch.object(t, "_dot_post", return_value=({"user_id": "dot-u-2"}, None)):
+            out = json.loads(t.dot_tool(dict(self._member)))
+        assert out["user_id"] == "dot-u-2"
+
+    def test_posts_normalized_body_to_users(self, dot_env):
+        with patch.object(t, "_dot_post", return_value=({"id": "x"}, None)) as post:
+            t.dot_tool(dict(self._member))
+        path, body = post.call_args.args
+        assert path == "/users"
+        assert body["phone_number"] == "4155551234"
+        assert body["country_code"] == "1"
+        assert body["email"] == "jane@example.com"
+        assert body["idempotency_key"]
+
+    def test_idempotency_key_stable_across_formatting(self, dot_env):
+        keys = []
+        with patch.object(t, "_dot_post", return_value=({"id": "x"}, None)) as post:
+            t.dot_tool(dict(self._member))
+            keys.append(post.call_args.args[1]["idempotency_key"])
+            t.dot_tool({**self._member, "email": "JANE@example.com ", "phone_number": "415-555-1234"})
+            keys.append(post.call_args.args[1]["idempotency_key"])
+        assert keys[0] == keys[1]
+
+    def test_different_members_get_different_keys(self, dot_env):
+        with patch.object(t, "_dot_post", return_value=({"id": "x"}, None)) as post:
+            t.dot_tool(dict(self._member))
+            first = post.call_args.args[1]["idempotency_key"]
+            t.dot_tool({**self._member, "email": "someone.else@example.com", "phone_number": "2125550000"})
+            second = post.call_args.args[1]["idempotency_key"]
+        assert first != second
+
+    def test_requires_email_or_phone(self, dot_env):
+        out = json.loads(t.dot_tool({"action": "create_user", "first_name": "Jane"}))
+        assert out["error"]
+
+    def test_duplicate_rejection_surfaces_and_says_hand_off(self, dot_env):
+        # Production rejects a duplicate phone; the coach must not guess.
+        err = 'HTTP 400: {"error":"user with phone_number already exists"}'
+        with patch.object(t, "_dot_post", return_value=(None, err)):
+            out = json.loads(t.dot_tool(dict(self._member)))
+        assert out["error"]
+        assert "already exists" in out["error"]
+        assert "hand off" in out["error"].lower()
+
+    def test_missing_id_in_response_is_an_error(self, dot_env):
+        with patch.object(t, "_dot_post", return_value=({"status": "ok"}, None)):
+            out = json.loads(t.dot_tool(dict(self._member)))
+        assert out["error"]
+
+    def test_never_raises(self, dot_env):
+        with patch.object(t, "_dot_post", side_effect=RuntimeError("boom")):
+            out = json.loads(t.dot_tool(dict(self._member)))
+        assert out["error"]
+
+
+class TestDotPost:
+    def test_http_error_body_is_kept(self, dot_env):
+        import urllib.error
+        import io
+
+        exc = urllib.error.HTTPError(
+            "u", 400, "Bad Request", {}, io.BytesIO(b'{"error":"already exists"}')
+        )
+        with patch("urllib.request.urlopen", side_effect=exc):
+            data, err = t._dot_post("/users", {"email": "a@b.com"})
+        assert data is None
+        assert "400" in err and "already exists" in err

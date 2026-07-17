@@ -49,11 +49,8 @@ thing this skill does. Before or alongside answering the specific status questio
 ## Procedure
 
 1. **Member `user_id`** comes from the `[CRWD member]` context line — pass it
-   straight through to both `crwd_db` and `dot`. **Beta assumption:** CRWD and
-   Dot ids are treated as the same value for now, so the same `user_id` goes
-   to `dot` `get_user_transfers` too — never ask the member for a separate
-   "Dot user ID" or try to look one up. Only use `crwd_db` `get_user` for a
-   **different** person.
+   straight through to `crwd_db`. Never ask the member for a "Dot user ID".
+   Only use `crwd_db` `get_user` for a **different** person.
 2. **Which gig?** If they're asking about a specific gig, resolve it first with
    `crwd_db` `get_gig_details` (confirm the `_id` when candidates are close) or
    `get_user_gigs`. For "all"/"history", skip this.
@@ -62,11 +59,21 @@ thing this skill does. Before or alongside answering the specific status questio
    `status`) and, if useful, `get_user_receipts` (proof validation state). If a
    submission isn't approved yet, say that — there's nothing for Dot to send.
 4. **Live payout (`dot`)** — once approved (or for a general history question):
-   - list the member's transfers → `dot` `get_user_transfers` with `user_id`
-     (the member's CRWD `user_id` — beta assumption is it's the same id Dot
-     uses, so don't ask them for a separate one).
+   - you need a **Dot `user_id`**, which is not the CRWD `user_id`. If you don't
+     have one, `dot` `create_user` returns one — pass the member's real name /
+     email / phone from `crwd_db` `get_user`, never a guess.
+   - list the member's transfers → `dot` `get_user_transfers` with that Dot
+     `user_id`.
    - need one transfer in full → `dot` `get_transfer` with the `transfer_id` of
      the relevant transfer from that list.
+   - **An empty list from a just-created user proves nothing.** When
+     `create_user` returns `user_is_new`, the id is brand new, so Dot has no
+     history under it — that is not evidence the member wasn't paid. Say you
+     can't see their payout history and hand off (`crwd-handoff`). Telling
+     someone they weren't paid on this basis is the worst error you can make
+     here.
+   - If `create_user` fails saying the user already exists, the member has a Dot
+     account this tool can't look up. Hand off — don't guess.
 5. **Answer plainly, in a line or two:** approved yet? → has Dot sent it? (method
    + date if shown). Quote the **real payout amount** from the gig data, not a
    guess.
@@ -106,8 +113,10 @@ thing this skill does. Before or alongside answering the specific status questio
 
 ## Verification
 
-- Used the `[CRWD member]` `user_id` for both `crwd_db` and `dot` (same id,
-  beta assumption — never asked the member for a separate Dot user ID).
+- Used the `[CRWD member]` `user_id` for `crwd_db`, and a Dot `user_id` for
+  `dot` — never asked the member for a Dot user ID.
+- Never told a member they weren't paid on the strength of an empty transfer
+  list from a freshly created Dot user.
 - Confirmed the right gig `_id` when the question was about a specific gig.
 - Separated approval state (`crwd_db`) from Dot's payout state (`dot`) — didn't
   conflate "approved" with "paid".

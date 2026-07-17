@@ -17,6 +17,16 @@ ground LLM gig acts when the member text fuzzy-matches the looked-up title.
 
 ``handoff-escalation`` is applied only when the agent calls ``crwd_handoff``.
 Classification observability is process logs only — never Chatwoot private notes.
+
+**Preserved labels.** This module only ever emits *topic* labels, and it assigns
+with ``replace=True`` every turn — so any label owned by something else is wiped
+on the next message unless it is carried over. ``_preserved_labels`` re-reads the
+conversation and re-attaches state this classifier cannot derive:
+``handoff-escalation`` (terminal and human-owned; set on an earlier turn),
+``gig-complete`` (crwd-proof-validator), and ``risk-*`` (crwd-risk-analyser).
+Note this is distinct from the in-process sticky-topic memory above: that caches
+*this* classifier's own output and is lost on restart, whereas preservation reads
+Chatwoot itself, which is where the state actually lives.
 """
 
 from __future__ import annotations
@@ -110,6 +120,13 @@ _last_labels_lock = threading.Lock()
 _last_topic_labels: Dict[str, List[str]] = {}
 # conversation key -> last dialogue acts (parallel to sticky labels)
 _last_topic_acts: Dict[str, List[str]] = {}
+
+# Labels this classifier must carry over rather than clear -- it emits only topic
+# labels but assigns with replace=True, so anything owned elsewhere would be wiped
+# on the next message. See _preserved_labels.
+_PRESERVED_LABELS = frozenset({"handoff-escalation", "gig-complete"})
+# Matched by prefix: the risk band is one of risk-low/medium/high/critical.
+_PRESERVED_PREFIXES = ("risk-",)
 
 _enrollment_cache_lock = threading.Lock()
 # contact_id -> (monotonic_ts, payload) where payload is None=unknown or (enrolled, names)
@@ -1821,6 +1838,47 @@ def _conversation_key(account_id: str, conversation_id: str) -> str:
     return f"{account_id}:{conversation_id}"
 
 
+def _preserved_labels(account_id: str, conversation_id: str) -> List[str]:
+    """Labels already on the conversation that this classifier must not clear.
+
+    Classification only emits topic labels and assigns with ``replace=True``, so
+    state owned elsewhere is erased on the next message unless re-attached:
+
+    * ``handoff-escalation`` — terminal and human-owned. Set on an earlier turn,
+      it is not re-derived by this turn's classification.
+    * ``gig-complete``       — crwd-proof-validator, when a gig's proof is done.
+    * ``risk-*``             — the fraud band, crwd-risk-analyser.
+
+    Unlike the in-process sticky-topic cache, this reads Chatwoot itself — the
+    state lives there, survives restarts, and a human clearing a label sticks.
+
+    Best-effort: any lookup failure returns [] and labeling proceeds rather than
+    blocking the turn.
+    """
+    try:
+        from plugins.platforms.chatwoot.labels_tool import (
+            _api_request,
+            _extract_conversation_labels,
+        )
+
+        ok, data, _err = _api_request(
+            "GET",
+            f"/api/v1/accounts/{account_id}/conversations/{conversation_id}/labels",
+        )
+        if not ok:
+            return []
+        current = _extract_conversation_labels(data)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("[chatwoot-labels-auto] preserved-label lookup failed: %s", exc)
+        return []
+    return [
+        label
+        for label in current
+        if label in _PRESERVED_LABELS
+        or any(label.startswith(p) for p in _PRESERVED_PREFIXES)
+    ]
+
+
 def _get_sticky_topics(account_id: str, conversation_id: str) -> List[str]:
     key = _conversation_key(account_id, conversation_id)
     with _last_labels_lock:
@@ -2098,6 +2156,32 @@ def classify_conversation_labels(
     return list(result.labels)
 
 
+def _conversation_has_handoff_label(account_id: str, conversation_id: str) -> bool:
+    """Return True if the conversation already carries ``handoff-escalation``.
+
+    Handoff is a terminal, human-owned state. Labels are assigned with
+    ``replace=True`` on every turn, so without this check a later turn that does
+    not re-trigger handoff would silently drop the tag ("added then removed").
+    Best-effort — any lookup failure returns False so labeling still proceeds.
+    """
+    try:
+        from plugins.platforms.chatwoot.labels_tool import (
+            _api_request,
+            _extract_conversation_labels,
+        )
+
+        ok, data, _err = _api_request(
+            "GET",
+            f"/api/v1/accounts/{account_id}/conversations/{conversation_id}/labels",
+        )
+        if not ok:
+            return False
+        return "handoff-escalation" in _extract_conversation_labels(data)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("[chatwoot-labels-auto] handoff-sticky lookup failed: %s", exc)
+        return False
+
+
 def auto_label_conversation(
     user_message: str = "",
     conversation_history: Optional[Sequence[Any]] = None,
@@ -2144,9 +2228,20 @@ def auto_label_conversation(
             "reasons": result.reasons,
         }
 
+    # Carry over state this classifier cannot derive (handoff set on an earlier
+    # turn, gig-complete, the risk band) -- replace=True would otherwise wipe it.
+    # Kept OUT of ``labels`` on purpose: that list feeds _store_sticky_topics
+    # below, and folding these in would absorb them into the topic memory and
+    # re-emit them as topics forever.
+    final_labels = labels + [
+        label
+        for label in _preserved_labels(account_id, conversation_id)
+        if label not in labels
+    ]
+
     # Always replace with the final set so stale topics drop on high-conf switches.
-    assign = _assign_labels(account_id, conversation_id, labels, replace=True)
-    assign["classified"] = labels
+    assign = _assign_labels(account_id, conversation_id, final_labels, replace=True)
+    assign["classified"] = final_labels
     assign["skipped"] = False
     assign["confidence"] = result.confidence
     assign["source"] = result.source
