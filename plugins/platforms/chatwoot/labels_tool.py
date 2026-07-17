@@ -18,7 +18,10 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
-from plugins.platforms.chatwoot.labels import PREDEFINED_LABELS, PREDEFINED_LABEL_TITLES
+from plugins.platforms.chatwoot.labels import (
+    APPLIED_LABELS,
+    APPLIED_LABEL_TITLES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +190,11 @@ def _get_all_labels(account_id: str) -> Dict[str, Any]:
 
 
 def _create_labels_if_not_exists(account_id: str) -> Dict[str, Any]:
+    """Bootstrap missing *applied* labels into the Chatwoot account.
+
+    Unapplied taxonomy titles are never created here (kept in code for future
+    reactivation only).
+    """
     ok, data, err = _api_request("GET", f"/api/v1/accounts/{account_id}/labels")
     if not ok:
         return {"success": False, "created": [], "existing": [], "error": err, "detail": data}
@@ -195,7 +203,7 @@ def _create_labels_if_not_exists(account_id: str) -> Dict[str, Any]:
     created: List[str] = []
     errors: List[str] = []
 
-    for entry in PREDEFINED_LABELS:
+    for entry in APPLIED_LABELS:
         title = _normalize_label(entry.get("title", ""))
         if not title or title in existing:
             continue
@@ -233,7 +241,8 @@ def _assign_labels(
     replace: bool,
 ) -> Dict[str, Any]:
     normalized = [_normalize_label(x) for x in labels if _normalize_label(x)]
-    if not normalized:
+    # Empty is allowed only for replace=True (clear conversation labels).
+    if not normalized and not replace:
         return {
             "success": False,
             "labels": [],
@@ -284,7 +293,7 @@ def _assign_labels(
     applied = _extract_conversation_labels(post_data) if post_data else final_labels
     return {
         "success": True,
-        "labels": applied or final_labels,
+        "labels": applied if applied or replace else final_labels,
         "replaced": replace,
         "error": None,
     }
@@ -389,9 +398,10 @@ CHATWOOT_LABELS_SCHEMA = {
     "description": (
         "Manage Chatwoot conversation labels on the current support conversation. "
         "Actions: get_all_labels (list account labels), create_labels_if_not_exists "
-        "(bootstrap predefined labels into the account), assign_labels (apply one "
-        "or more labels to the current conversation; merges by default). Safe to "
-        "call outside Chatwoot — it no-ops gracefully."
+        "(bootstrap applied predefined labels into the account; unapplied titles are "
+        "not created), assign_labels (apply one or more labels to the current "
+        "conversation; merges by default). Safe to call outside Chatwoot — it "
+        "no-ops gracefully."
     ),
     "parameters": {
         "type": "object",
@@ -410,7 +420,7 @@ CHATWOOT_LABELS_SCHEMA = {
                 "items": {"type": "string"},
                 "description": (
                     "Label title strings to assign (required for assign_labels). "
-                    f"Predefined titles include: {', '.join(sorted(PREDEFINED_LABEL_TITLES))}."
+                    f"Applied titles include: {', '.join(sorted(APPLIED_LABEL_TITLES))}."
                 ),
             },
             "replace": {

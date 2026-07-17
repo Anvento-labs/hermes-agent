@@ -4,6 +4,20 @@ Internal triage documentation for how Hermes automatically labels CRWD Coach
 conversations in Chatwoot. Labels are for **human agents filtering the inbox**.
 They are never mentioned to the member.
 
+> **Taxonomy update (applied vs unapplied):** `plugins/platforms/chatwoot/labels.py`
+> now splits `APPLIED_LABELS` (assigned + bootstrapped) from `UNAPPLIED_LABELS`
+> (kept for future reactivation; never assigned; never created on Chatwoot).
+>
+> **Currently applied:** `payment-issue`, `app-help`, `new-user` (data-first: no
+> completed gig yet), `proof-acceptance` / `proof-rejection` (this-turn
+> `store_proof`), `handoff-escalation`, plus preserved `gig-complete` / `risk-*`.
+>
+> **Unapplied (not assigned):** `mid-gig-support`, `proof-submission`,
+> `gig-discovery`, `general-inquiry`, `payment-payout`, `account-eligibility`,
+> `account-info`, `scam`, `off-topic`. Sections below that still name those
+> titles describe historical act detection; Stage 2 no longer emits them.
+> Prefer `skills/crwd/chatwoot-conversation-labels/` for the live applied set.
+
 ---
 
 ## Table of contents

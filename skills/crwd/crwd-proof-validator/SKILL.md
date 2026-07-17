@@ -233,6 +233,10 @@ If `store_proof` returned `is_gig_completed: true`, call
 `chatwoot_labels(action="assign_labels", labels=["gig-complete"])`. It merges, so
 the triage labels survive. Outside Chatwoot the tool no-ops — carry on.
 
+**Do not** manually assign `proof-acceptance` / `proof-rejection` — the Chatwoot
+auto-label hook derives those from this turn's `store_proof` results (all
+accepted → `proof-acceptance`; any non-accepted → `proof-rejection`).
+
 Labels are **internal**. Never mention them to the member.
 
 ### 9. On any non-accept, hand off

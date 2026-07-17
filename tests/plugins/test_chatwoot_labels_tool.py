@@ -80,9 +80,9 @@ class TestResolveConversation:
 
 
 class TestCreateLabelsIfNotExists:
-    def test_creates_only_missing(self, chatwoot_env):
+    def test_creates_only_missing_applied(self, chatwoot_env):
         existing_payload = {
-            "payload": [{"title": "gig-discovery", "id": 1}],
+            "payload": [{"title": "app-help", "id": 1}],
         }
 
         def fake_api(method, path, body=None):
@@ -95,14 +95,32 @@ class TestCreateLabelsIfNotExists:
         with patch.object(t, "_api_request", side_effect=fake_api):
             out = t._create_labels_if_not_exists("1")
 
-        # Derive the count from the constant: hardcoding it went stale the last
-        # time a label was added, and the assertion silently drifted.
-        from plugins.platforms.chatwoot.labels import PREDEFINED_LABEL_TITLES
+        from plugins.platforms.chatwoot.labels import (
+            APPLIED_LABEL_TITLES,
+            UNAPPLIED_LABEL_TITLES,
+        )
 
-        assert "gig-discovery" not in out["created"]
-        expected = sorted(PREDEFINED_LABEL_TITLES - {"gig-discovery"})
+        assert "app-help" not in out["created"]
+        expected = sorted(APPLIED_LABEL_TITLES - {"app-help"})
         assert sorted(out["created"]) == expected
-        assert "gig-discovery" in (out.get("existing") or [])
+        # Unapplied titles must never be bootstrapped.
+        assert not (set(out["created"]) & UNAPPLIED_LABEL_TITLES)
+        assert "app-help" in (out.get("existing") or [])
+
+    def test_does_not_create_unapplied(self, chatwoot_env):
+        from plugins.platforms.chatwoot.labels import UNAPPLIED_LABEL_TITLES
+
+        def fake_api(method, path, body=None):
+            if method == "GET" and path.endswith("/labels") and "conversations" not in path:
+                return True, {"payload": []}, ""
+            if method == "POST" and path.endswith("/labels"):
+                return True, {"payload": body}, ""
+            return False, None, "unexpected"
+
+        with patch.object(t, "_api_request", side_effect=fake_api):
+            out = t._create_labels_if_not_exists("1")
+
+        assert not (set(out["created"]) & UNAPPLIED_LABEL_TITLES)
 
     def test_get_failure(self, chatwoot_env):
         with patch.object(t, "_api_request", return_value=(False, None, "HTTP 401")):
@@ -122,7 +140,7 @@ class TestAssignLabels:
             if method == "POST" and "conversations" in path:
                 return True, {"payload": body["labels"]}, ""
             if method == "GET":
-                return True, {"payload": [{"title": x} for x in t.PREDEFINED_LABEL_TITLES]}, ""
+                return True, {"payload": [{"title": x} for x in t.APPLIED_LABEL_TITLES]}, ""
             return False, None, "unexpected"
 
         with patch.object(t, "_api_request", side_effect=fake_api):

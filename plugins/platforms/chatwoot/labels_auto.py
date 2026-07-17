@@ -16,12 +16,14 @@ tool calls are **soft evidence** in the LLM feature bundle — only
 ground LLM gig acts when the member text fuzzy-matches the looked-up title.
 
 ``handoff-escalation`` is applied only when the agent calls ``crwd_handoff``.
+``proof-rejection`` / ``proof-acceptance`` come from ``store_proof`` this turn.
+``new-user`` is data-first (member has not completed a gig yet).
 Classification observability is process logs only — never Chatwoot private notes.
 
-**Preserved labels.** This module only ever emits *topic* labels, and it assigns
-with ``replace=True`` every turn — so any label owned by something else is wiped
-on the next message unless it is carried over. ``_preserved_labels`` re-reads the
-conversation and re-attaches state this classifier cannot derive:
+**Preserved labels.** This module only ever emits *topic* / turn labels, and it
+assigns with ``replace=True`` every turn — so any label owned by something else
+is wiped on the next message unless it is carried over. ``_preserved_labels``
+re-reads the conversation and re-attaches state this classifier cannot derive:
 ``handoff-escalation`` (terminal and human-owned; set on an earlier turn),
 ``gig-complete`` (crwd-proof-validator), and ``risk-*`` (crwd-risk-analyser).
 Note this is distinct from the in-process sticky-topic memory above: that caches
@@ -41,7 +43,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from plugins.platforms.chatwoot.labels import PREDEFINED_LABEL_TITLES
+from plugins.platforms.chatwoot.labels import APPLIED_LABEL_TITLES
 from plugins.platforms.chatwoot.labels_tool import (
     _assign_labels,
     _create_labels_if_not_exists,
@@ -59,6 +61,7 @@ _LLM_ASSISTANT_TURNS = 2
 _LLM_ASSISTANT_TRUNCATE = 200
 
 # Sticky gig continuity — grounding may reuse these when member text is deictic.
+# (Unapplied gig topic titles are retained only for sticky/act continuity.)
 _GIG_TOPIC_LABELS = frozenset({
     "gig-discovery",
     "mid-gig-support",
@@ -68,6 +71,18 @@ _GIG_TOPIC_ACTS = frozenset({
     "browse_open_gigs",
     "enrolled_gig_help",
     "proof",
+})
+
+# Applied intent topics that may participate in sticky inheritance.
+_STICKY_TOPIC_LABELS = frozenset({"payment-issue", "app-help"})
+
+# Turn / state labels excluded from sticky topic memory.
+_NON_STICKY_LABELS = frozenset({
+    "handoff-escalation",
+    "gig-complete",
+    "new-user",
+    "proof-rejection",
+    "proof-acceptance",
 })
 
 # Closed dialogue-act set (Stage 1 LLM output).
@@ -89,7 +104,8 @@ DIALOGUE_ACTS = frozenset({
 _LABEL_TO_ACT: Dict[str, str] = {
     "account-info": "account_status",
     "account-eligibility": "eligibility",
-    "payment-payout": "payout",
+    "payment-issue": "payout",
+    "payment-payout": "payout",  # legacy unapplied title → same act
     "proof-submission": "proof",
     "mid-gig-support": "enrolled_gig_help",
     "gig-discovery": "browse_open_gigs",
@@ -131,6 +147,8 @@ _PRESERVED_PREFIXES = ("risk-",)
 _enrollment_cache_lock = threading.Lock()
 # contact_id -> (monotonic_ts, payload) where payload is None=unknown or (enrolled, names)
 _enrollment_cache: Dict[str, Tuple[float, Optional[Tuple[bool, Set[str]]]]] = {}
+# contact_id -> (monotonic_ts, completed) where completed is None=unknown or bool
+_completed_gig_cache: Dict[str, Tuple[float, Optional[bool]]] = {}
 
 _CRWD_ANCHOR_RE = re.compile(
     r"\b(crwd|gig|gigs|payout|proof|campaign|dot)\b|"
@@ -173,20 +191,15 @@ _META_IDENTITY_RE = re.compile(
 
 # LLM may not invent these unless member text or tools support them.
 _LLM_MUST_GROUND = frozenset({
-    "gig-discovery",
-    "general-inquiry",
-    "payment-payout",
-    "account-eligibility",
-    "account-info",
-    "scam",
+    "payment-issue",
+    "app-help",
 })
 
-# Scored topic rules (score is for confidence/logging; no numeric label cap).
-# Opt-out / stop-contact is intentionally not a topic — falls through to
-# off-topic / sticky / auxiliary LLM like other unmatched text.
+# Scored topic rules for *applied* intent labels only.
+# Unapplied titles are never emitted from heuristics.
 _LABEL_RULES: Tuple[Tuple[str, float, Tuple[str, ...]], ...] = (
     (
-        "payment-payout",
+        "payment-issue",
         1.0,
         (
             r"\bpaid\b",
@@ -198,79 +211,6 @@ _LABEL_RULES: Tuple[Tuple[str, float, Tuple[str, ...]], ...] = (
             r"\bdot\b",
             r"\bchargeback\b",
             r"\brefund\b",
-        ),
-    ),
-    (
-        "account-eligibility",
-        1.0,
-        (
-            r"\bnot eligible\b",
-            r"\bineligible\b",
-            r"\bcan'?t join\b",
-            r"\bdon'?t qualify\b",
-            r"\btoo young\b",
-            r"\bwrong state\b",
-            r"\bage requirement\b",
-        ),
-    ),
-    (
-        "account-info",
-        1.0,
-        (
-            r"\bmy account\b",
-            r"\bmembership\b",
-            r"\baccount status\b",
-            r"\baccount details\b",
-            r"\bdetails about me\b",
-            r"\bgive details about me\b",
-            r"\bmy info\b",
-            r"\bmy profile\b",
-            r"\bdeactivat",
-            r"\bban(?:ned|s)?\b",
-            r"\bsuspend",
-            r"\bwhat(?:'s|\s+is)\s+my\s+name\b",
-            r"\btell\s+me\s+my\s+name\b",
-            r"\bwho\s+am\s+i\b",
-        ),
-    ),
-    (
-        "scam",
-        1.0,
-        (
-            r"\bwire transfer\b",
-            r"\bgift card\b",
-            r"\bbitcoin\b",
-            r"\bphishing\b",
-            r"\bsuspicious\b",
-            r"\bsend me your password\b",
-            r"\bscam\b",
-            r"\bfraud\b",
-            # Unauthorized / another-member data asks (OID cases use hard_scam_signals)
-            r"\banother\s+(?:user|member|person)(?:'s)?\b",
-            r"\bsomeone\s+else(?:'s)?\b",
-            r"\bother\s+(?:user|member)(?:'s)?\b",
-            r"\btheir\s+(?:gigs?|account|name|profile)\b",
-            # Participant / roster lists
-            r"\b(?:list|show|get)\s+(?:the\s+|all\s+)?"
-            r"(?:participants?|members?|workers?|roster|attendees?)\b",
-            r"\b(?:participants?|members?|workers?)\s+(?:of|for|in|on)\b",
-            r"\bwho\s+(?:is|are)\s+(?:enrolled|participating)\b",
-            # Third-party PII
-            r"\b(?:his|her|their)\s+(?:(?:phone\s+)?number|phone|email|address|contact)\b",
-            r"\b(?:provide|give|share)\s+(?:me\s+)?(?:his|her|their)\s+"
-            r"(?:(?:phone\s+)?number|phone|email)\b",
-            # Impersonation
-            r"\bpretend\s+(?:i\s+am|to\s+be|you(?:'re|\s+are))\b",
-            r"\bact\s+(?:as|like)\s+(?:user|member|me)\b",
-            r"\blog\s*in\s+as\b",
-            r"\bimpersonat",
-            # Jailbreak / prompt injection
-            r"\bignore\s+(?:previous|all|your)\s+(?:instructions?|rules?|prompts?)\b",
-            r"\bjailbreak\b",
-            r"\bdeveloper\s+mode\b",
-            r"\bbypass\s+(?:your|the|all)\b",
-            r"\byou\s+are\s+now\b",
-            r"\bdan\s+mode\b",
         ),
     ),
     (
@@ -298,48 +238,6 @@ _LABEL_RULES: Tuple[Tuple[str, float, Tuple[str, ...]], ...] = (
             r"\blink won'?t\b",
             r"\bpage won'?t load\b",
             r"\berror code\b",
-        ),
-    ),
-    (
-        "general-inquiry",
-        1.0,
-        (
-            r"\bwhat(?:'s| is) crwd\b",
-            r"\bwhat is crwd\b",
-            r"\bhow does crwd work\b",
-            r"\bwhat does crwd do\b",
-            r"\btell me about crwd\b",
-            r"\bwhat is (?:this )?(?:app|application|platform)\b",
-            r"\bhow does (?:crwd|the app|this app) work\b",
-            r"\bhow do i apply\b",
-            r"\bwhat are gigs\b",
-            r"\bis crwd (?:legit|legitimate|real|safe)\b",
-        ),
-    ),
-    (
-        "gig-discovery",
-        1.0,
-        (
-            r"\bfind (?:a )?gig",
-            r"\bbrowse\b",
-            r"\bavailable gig",
-            r"\bnear me\b",
-            r"\bnew gig",
-            r"\bdiscover\b",
-            r"\bwhat gig",
-            r"\bany gig",
-        ),
-    ),
-    (
-        "off-topic",
-        0.9,
-        (
-            r"\btell me a joke\b",
-            r"\brecipe\b",
-            r"\bweather\b",
-            r"\bhomework\b",
-            r"\btrivia\b",
-            r"\bwrite code\b",
         ),
     ),
 )
@@ -531,6 +429,28 @@ def record_tool_evidence_hook(**kwargs: Any) -> None:
     entry: Dict[str, str] = {"tool": tool_name, "action": action}
     if gig_hint:
         entry["gig_hint"] = gig_hint
+
+    # Capture store_proof verdicts for proof-acceptance / proof-rejection labels.
+    if tool_name == "crwd_db" and action == "store_proof":
+        status = str(args_dict.get("status") or "").strip().lower()
+        is_completed = ""
+        raw_result = kwargs.get("result")
+        if isinstance(raw_result, str) and raw_result.strip():
+            try:
+                parsed = json.loads(raw_result)
+                if isinstance(parsed, dict):
+                    status = str(parsed.get("status") or status).strip().lower()
+                    if parsed.get("is_gig_completed") is True:
+                        is_completed = "true"
+                    elif parsed.get("is_gig_completed") is False:
+                        is_completed = "false"
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if status:
+            entry["proof_status"] = status
+        if is_completed:
+            entry["is_gig_completed"] = is_completed
+
     try:
         current = list(_tool_evidence_this_turn.get() or ())
     except LookupError:
@@ -638,7 +558,7 @@ def _member_mentions_tool_gig_hint(
 def hard_labels_from_tools(
     evidence: Optional[Sequence[Dict[str, str]]] = None,
 ) -> Tuple[List[str], List[str]]:
-    """Exclusive hard labels from tools — only ``crwd_handoff``."""
+    """Hard labels from tools — ``crwd_handoff`` and this-turn ``store_proof``."""
     evidence = list(evidence if evidence is not None else tool_evidence_this_turn())
     labels: List[str] = []
     reasons: List[str] = []
@@ -647,7 +567,53 @@ def hard_labels_from_tools(
         if tool == "crwd_handoff" and "handoff-escalation" not in labels:
             labels.append("handoff-escalation")
             reasons.append("tool:crwd_handoff")
+
+    proof_labels, proof_reasons = proof_verdict_labels_from_tools(evidence)
+    for label in proof_labels:
+        if label not in labels:
+            labels.append(label)
+    reasons.extend(proof_reasons)
     return labels, reasons
+
+
+def proof_verdict_labels_from_tools(
+    evidence: Optional[Sequence[Dict[str, str]]] = None,
+) -> Tuple[List[str], List[str]]:
+    """Turn-scoped proof labels from ``store_proof`` results this turn.
+
+    * Any non-accepted status → ``proof-rejection``
+    * Else all accepted (≥1) → ``proof-acceptance``
+    """
+    evidence = list(evidence if evidence is not None else tool_evidence_this_turn())
+    statuses: List[str] = []
+    for entry in evidence:
+        tool = str(entry.get("tool") or "").strip()
+        action = str(entry.get("action") or "").strip()
+        if tool != "crwd_db" or action != "store_proof":
+            continue
+        status = str(entry.get("proof_status") or "").strip().lower()
+        if status:
+            statuses.append(status)
+    if not statuses:
+        return [], []
+    if any(s != "accepted" for s in statuses):
+        return ["proof-rejection"], ["tool:store_proof:rejection"]
+    return ["proof-acceptance"], ["tool:store_proof:acceptance"]
+
+
+def _turn_completed_gig_from_tools(
+    evidence: Optional[Sequence[Dict[str, str]]] = None,
+) -> bool:
+    """True when this turn's store_proof completed a gig."""
+    evidence = list(evidence if evidence is not None else tool_evidence_this_turn())
+    for entry in evidence:
+        if (
+            str(entry.get("tool") or "").strip() == "crwd_db"
+            and str(entry.get("action") or "").strip() == "store_proof"
+            and str(entry.get("is_gig_completed") or "").strip().lower() == "true"
+        ):
+            return True
+    return False
 
 
 _JAILBREAK_IMPERSONATION_RE = re.compile(
@@ -1020,64 +986,27 @@ def acts_to_labels(
     *,
     sticky_topics: Optional[Sequence[str]] = None,
 ) -> List[str]:
-    """Stage 2 — map dialogue acts to Chatwoot label titles."""
-    if membership is None and contact_id:
-        membership = _member_enrollment(contact_id)
+    """Stage 2 — map dialogue acts to *applied* Chatwoot label titles only.
 
+    Unapplied taxonomy titles (mid-gig, discovery, scam, …) are never emitted.
+    """
+    del membership  # enrollment remaps only mattered for unapplied gig labels
     labels: List[str] = []
     for act in acts:
         if act not in DIALOGUE_ACTS:
             continue
-        if act == "account_status":
-            _ensure_label(labels, "account-info")
-        elif act == "eligibility":
-            _ensure_label(labels, "account-eligibility")
-        elif act == "payout":
-            _ensure_label(labels, "payment-payout")
-        elif act == "proof":
-            _ensure_label(labels, "proof-submission", prefer_front=True)
-            if membership is not None and membership[0]:
-                _ensure_label(labels, "mid-gig-support")
-        elif act == "enrolled_gig_help":
-            if membership is None:
-                continue
-            enrolled, gig_names = membership
-            if not enrolled:
-                _ensure_label(labels, "gig-discovery")
-            else:
-                gig_name = _extract_gig_name(user_message)
-                if gig_name and not _gig_name_in_enrolled(gig_name, gig_names):
-                    _ensure_label(labels, "gig-discovery")
-                else:
-                    _ensure_label(labels, "mid-gig-support")
-        elif act == "browse_open_gigs":
-            # Named enrolled gig ("details about SmokeBoxBBQ") is mid-gig, not browse.
-            gig_name = _extract_gig_name(user_message)
-            if (
-                membership is not None
-                and membership[0]
-                and gig_name
-                and _gig_name_in_enrolled(gig_name, membership[1])
-            ):
-                _ensure_label(labels, "mid-gig-support")
-            else:
-                _ensure_label(labels, "gig-discovery")
-        elif act == "general_inquiry":
-            _ensure_label(labels, "general-inquiry")
+        if act == "payout":
+            _ensure_label(labels, "payment-issue")
         elif act == "app_nav":
             _ensure_label(labels, "app-help")
-        elif act == "scam":
-            _ensure_label(labels, "scam")
-        elif act == "chitchat":
-            _ensure_label(labels, "off-topic")
         elif act == "ambiguous_followup":
             if sticky_topics:
                 for topic in sticky_topics:
-                    if topic in PREDEFINED_LABEL_TITLES and topic != "handoff-escalation":
-                        _ensure_label(labels, topic)
-            if not labels:
-                _ensure_label(labels, "off-topic")
-        # escalate — no topic label by itself
+                    title = str(topic).strip().lower()
+                    if title in _STICKY_TOPIC_LABELS:
+                        _ensure_label(labels, title)
+        # Unapplied acts (account_status, eligibility, proof, enrolled_gig_help,
+        # browse_open_gigs, general_inquiry, scam, chitchat, escalate) → no topic.
 
     return labels
 
@@ -1089,35 +1018,10 @@ def _apply_conflict_post_checks(
     soft_facts: Sequence[str],
     membership: Optional[Tuple[bool, Set[str]]],
 ) -> List[str]:
-    """Member-primary topics win over contextual tool soft facts."""
-    del soft_facts  # reserved for future scoring; rules are act-driven
-    act_set = set(acts)
-    member_primary = {
-        "account-info",
-        "account-eligibility",
-        "payment-payout",
-        "scam",
-        "app-help",
-    }
-    has_member_primary = bool(set(labels) & member_primary)
-
-    if has_member_primary and "mid-gig-support" in labels:
-        if "enrolled_gig_help" not in act_set and "proof" not in act_set:
-            labels = [l for l in labels if l != "mid-gig-support"]
-
-    if _PROFILE_SELF_RE.search(user_message or "") and "mid-gig-support" in labels:
-        if "proof" not in act_set:
-            labels = [l for l in labels if l != "mid-gig-support"]
-            if "account-info" not in labels:
-                labels.append("account-info")
-
-    if "mid-gig-support" in labels and membership is not None and not membership[0]:
-        if "proof" not in act_set:
-            labels = [l for l in labels if l != "mid-gig-support"]
-            if "gig-discovery" not in labels and "enrolled_gig_help" in act_set:
-                labels.append("gig-discovery")
-
-    return labels
+    """Member-primary applied topics win over soft tool noise."""
+    del soft_facts, membership, acts, user_message
+    # Keep only applied titles that Stage 2 may emit.
+    return [l for l in labels if l in APPLIED_LABEL_TITLES]
 
 
 def _filter_grounded_acts(
@@ -1128,16 +1032,9 @@ def _filter_grounded_acts(
     sticky_acts: Optional[Sequence[str]] = None,
     tool_gig_hints: Optional[Sequence[str]] = None,
 ) -> List[str]:
-    """Drop acts that lack member-text support (mirrors label grounding)."""
+    """Drop applied acts that lack member-text support."""
     act_label = {
-        "browse_open_gigs": "gig-discovery",
-        "general_inquiry": "general-inquiry",
-        "payout": "payment-payout",
-        "account_status": "account-info",
-        "eligibility": "account-eligibility",
-        "scam": "scam",
-        "enrolled_gig_help": "mid-gig-support",
-        "proof": "proof-submission",
+        "payout": "payment-issue",
         "app_nav": "app-help",
     }
     kept: List[str] = []
@@ -1370,6 +1267,35 @@ def _gig_name_in_enrolled(gig_name: str, enrolled_names: Set[str]) -> bool:
     return False
 
 
+def _member_has_completed_gig(contact_id: str) -> Optional[bool]:
+    """Return whether the member completed ≥1 gig, or ``None`` if unknown."""
+    contact_id = str(contact_id or "").strip()
+    if not contact_id:
+        return None
+    now = time.monotonic()
+    with _enrollment_cache_lock:
+        cached = _completed_gig_cache.get(contact_id)
+        if cached and (now - cached[0]) < _ENROLLMENT_CACHE_TTL_S:
+            return cached[1]
+
+    result: Optional[bool] = None
+    if os.getenv("CRWD_MONGO_URI"):
+        try:
+            from plugins.platforms.chatwoot.coach_context import resolve_member_crwd_id
+            from tools.crwd_db_tool import user_has_completed_gig
+
+            user_id = resolve_member_crwd_id(contact_id)
+            if user_id:
+                result = user_has_completed_gig(user_id)
+        except Exception as exc:
+            logger.debug("[chatwoot-labels-auto] completed-gig lookup failed: %s", exc)
+            result = None
+
+    with _enrollment_cache_lock:
+        _completed_gig_cache[contact_id] = (now, result)
+    return result
+
+
 def _member_enrollment(contact_id: str) -> Optional[Tuple[bool, Set[str]]]:
     """Return enrollment state: ``(enrolled, names)``, or ``None`` if unknown."""
     contact_id = str(contact_id or "").strip()
@@ -1480,28 +1406,22 @@ def _apply_proof_and_mid_gig_labels(
     matched: List[str],
     reasons: List[str],
 ) -> Tuple[float, bool]:
-    """Add proof/mid-gig/discovery from text.
+    """Legacy proof/mid-gig heuristics — no longer emit unapplied titles.
 
-    Returns ``(score, suppress_discovery_fallback)``. When membership is
-    unknown and mid-gig language was present, suppress bare-gig/anchor
-    discovery invention so we under-tag rather than mis-tag.
+    Returns ``(score, suppress_discovery_fallback)``. Kept so call sites and
+    enrollment-unknown suppress behavior stay stable; assignment is a no-op.
     """
+    del matched  # unapplied titles are not appended
     proof = _matches_any(text, _PROOF_PATTERNS)
     mid = _matches_any(text, _MID_GIG_PATTERNS)
-    # Buy/quantity follow-ups only count as mid-gig with CRWD/gig context in
-    # the heuristic text (current + prior when contextual).
     if not mid and _matches_any(text, _MID_GIG_BUY_PATTERNS) and (
         _has_crwd_anchor(text) or bool(_extract_gig_name(user_message))
         or bool(_extract_gig_name(text))
     ):
         mid = True
-    # Named-product asks without the word "gig" (e.g. "details about boss mode")
-    # still count as mid-gig evidence via name extraction.
     if not mid and _extract_gig_name(user_message):
         mid = True
     if _PROFILE_SELF_RE.search(user_message or ""):
-        mid = False
-    if "account-info" in matched or "account-eligibility" in matched:
         mid = False
     if not proof and not mid:
         return 0.0, False
@@ -1509,54 +1429,43 @@ def _apply_proof_and_mid_gig_labels(
     membership = _member_enrollment(contact_id) if (proof or mid) else None
 
     if proof:
-        _ensure_label(matched, "proof-submission", prefer_front=True)
-        reasons.append("heuristic:proof")
-        if membership is not None and membership[0]:
-            if "gig-discovery" in matched:
-                matched.remove("gig-discovery")
-            _ensure_label(matched, "mid-gig-support")
-            reasons.append("heuristic:proof+enrolled")
-        return 1.0, False
-
-    if "mid-gig-support" in matched or "gig-discovery" in matched:
-        return 0.8, False
-
-    if not mid:
+        reasons.append("heuristic:proof:unapplied")
         return 0.0, False
 
-    if membership is None:
-        # Unknown membership — do not invent gig-discovery.
+    if membership is None and mid:
         reasons.append("heuristic:mid-gig:skipped_unknown_enrollment")
         return 0.0, True
 
-    enrolled, gig_names = membership
-    if not enrolled:
-        matched.append("gig-discovery")
-        reasons.append("heuristic:mid-gig:unenrolled->discovery")
-        return 0.9, False
-
-    gig_name = _extract_gig_name(user_message)
-    if gig_name and not _gig_name_in_enrolled(gig_name, gig_names):
-        matched.append("gig-discovery")
-        reasons.append("heuristic:mid-gig:unmatched_name->discovery")
-        return 0.9, False
-
-    matched.append("mid-gig-support")
-    reasons.append("heuristic:mid-gig:enrolled")
-    return 1.0, False
+    if mid:
+        reasons.append("heuristic:mid-gig:unapplied")
+    return 0.0, False
 
 
-def _finalize_labels(topics: Sequence[str], handoff: bool) -> List[str]:
-    """Dedupe and keep every predefined label; always attach handoff when requested."""
+def _finalize_labels(
+    topics: Sequence[str],
+    handoff: bool,
+    *,
+    proof_verdicts: Optional[Sequence[str]] = None,
+    new_user: bool = False,
+) -> List[str]:
+    """Dedupe to applied titles; attach handoff / proof verdicts / new-user."""
     deduped: List[str] = []
     for label in topics:
         title = str(label).strip().lower()
-        if title not in PREDEFINED_LABEL_TITLES or title in deduped:
+        if title not in APPLIED_LABEL_TITLES or title in deduped:
             continue
-        if title == "handoff-escalation":
+        if title in _NON_STICKY_LABELS:
+            continue
+        if title.startswith("risk-"):
             continue
         deduped.append(title)
-    if handoff:
+    for title in proof_verdicts or ():
+        t = str(title).strip().lower()
+        if t in APPLIED_LABEL_TITLES and t not in deduped:
+            deduped.append(t)
+    if new_user and "new-user" not in deduped:
+        deduped.append("new-user")
+    if handoff and "handoff-escalation" not in deduped:
         deduped.append("handoff-escalation")
     return deduped
 
@@ -1573,7 +1482,7 @@ def _heuristic_classify(
     strong = False
 
     if not text.strip():
-        return ["off-topic"], ["heuristic:empty->off-topic"], 0.2, True
+        return [], ["heuristic:empty->no-topic"], 0.2, True
 
     for label, score, patterns in _COMPILED_RULES:
         if any(p.search(text) for p in patterns):
@@ -1581,48 +1490,20 @@ def _heuristic_classify(
                 matched.append(label)
                 reasons.append(f"heuristic:{label}")
             best = max(best, score)
-            if label != "off-topic":
-                strong = True
+            strong = True
 
-    proof_score, suppress_discovery = _apply_proof_and_mid_gig_labels(
+    proof_score, _suppress = _apply_proof_and_mid_gig_labels(
         text, user_message, contact_id, matched, reasons
     )
     if proof_score:
         best = max(best, proof_score)
         strong = True
 
-    # Navigation/app-help already matched — do not invent gig-discovery from
-    # the word "gig(s)" (e.g. "where can i find irl gigs?").
-    allow_discovery_fallback = "app-help" not in matched and not suppress_discovery
-
-    if not matched and allow_discovery_fallback and re.search(r"\bgig", text, re.IGNORECASE):
-        matched.append("gig-discovery")
-        reasons.append("heuristic:bare-gig->discovery")
-        best = max(best, 0.4)
-
     fallback_only = False
     if not matched:
         fallback_only = True
-        if suppress_discovery:
-            # Defer to LLM/sticky rather than inventing discovery.
-            reasons.append("heuristic:mid-gig:no_fallback")
-            best = 0.2
-        elif allow_discovery_fallback and _has_crwd_anchor(text):
-            if re.search(
-                r"\b(what|how|tell me|explain|apply|legit|legitimate)\b",
-                text,
-                re.IGNORECASE,
-            ):
-                matched.append("general-inquiry")
-                reasons.append("heuristic:anchor->general-inquiry")
-            else:
-                matched.append("gig-discovery")
-                reasons.append("heuristic:anchor->discovery")
-            best = 0.35
-        else:
-            matched.append("off-topic")
-            reasons.append("heuristic:fallback->off-topic")
-            best = 0.25
+        reasons.append("heuristic:fallback->no-topic")
+        best = 0.25
 
     return matched, reasons, best, fallback_only or (not strong and best < 0.6)
 
@@ -1656,40 +1537,14 @@ def _llm_label_grounded(
     sticky_acts: Optional[Sequence[str]] = None,
     tool_gig_hints: Optional[Sequence[str]] = None,
 ) -> bool:
-    """False for topic labels invented without member/tool/sticky evidence."""
+    """False for applied topic labels invented without member evidence."""
+    del sticky_labels, sticky_acts, tool_gig_hints  # gig sticky unused for applied set
     if label not in _LLM_MUST_GROUND:
         return True
     if label in tool_topic_labels:
         return True
-    # Gig continuity: prior sticky gig topic grounds browse/discovery acts on
-    # pronoun follow-ups (e.g. "how many products for it?").
-    if label in {"gig-discovery", "mid-gig-support"}:
-        sticky_l = {str(x).strip().lower() for x in (sticky_labels or ())}
-        sticky_a = {str(x).strip().lower() for x in (sticky_acts or ())}
-        if sticky_l & _GIG_TOPIC_LABELS or sticky_a & _GIG_TOPIC_ACTS:
-            return True
-        if _member_mentions_tool_gig_hint(member_text, tool_gig_hints or ()):
-            return True
     text = (member_text or "").lower()
-    if label == "gig-discovery":
-        return bool(
-            re.search(
-                r"\b(gig|gigs|crwd|campaign|browse|near me|apply|available)\b",
-                text,
-                re.IGNORECASE,
-            )
-        ) or bool(_extract_gig_name(member_text))
-    if label == "general-inquiry":
-        return bool(
-            re.search(
-                r"\b(crwd|what is|what's|how does|how do|tell me about|"
-                r"what does|what are gigs|apply|legit|legitimate|real|safe|"
-                r"app|application|platform)\b",
-                text,
-                re.IGNORECASE,
-            )
-        )
-    if label == "payment-payout":
+    if label == "payment-issue":
         return bool(
             re.search(
                 r"\b(paid|payment|payout|dot|money|refund|chargeback)\b",
@@ -1697,41 +1552,11 @@ def _llm_label_grounded(
                 re.IGNORECASE,
             )
         )
-    if label == "account-eligibility":
+    if label == "app-help":
         return bool(
             re.search(
-                r"\b(eligible|ineligible|qualify|can'?t join|too young|"
-                r"wrong state|age requirement)\b",
-                text,
-                re.IGNORECASE,
-            )
-        )
-    if label == "account-info":
-        return bool(
-            re.search(
-                r"\b(my account|membership|account status|account details|"
-                r"details about me|my info|my profile|deactivat|"
-                r"ban(?:ned|s)?|suspend)\b",
-                text,
-                re.IGNORECASE,
-            )
-            or _PROFILE_SELF_RE.search(text)
-        )
-    if label == "scam":
-        force, _ = hard_scam_signals(member_text)
-        if force:
-            return True
-        return bool(
-            re.search(
-                r"\b(phishing|wire transfer|gift card|bitcoin|suspicious|"
-                r"password|scam|fraud|"
-                r"another\s+(?:user|member|person)|someone\s+else|"
-                r"other\s+(?:user|member)|their\s+(?:gigs?|account|name)|"
-                r"participants?|members?|workers?|roster|attendees?|"
-                r"(?:his|her|their)\s+(?:(?:phone\s+)?number|phone|email)|"
-                r"pretend|impersonat|jailbreak|developer\s+mode|"
-                r"ignore\s+(?:previous|all|your)|bypass|you\s+are\s+now|"
-                r"log\s*in\s+as|act\s+(?:as|like))\b",
+                r"\b(where|tab|section|navigate|broken|error|bug|crash|login|"
+                r"won'?t load|not working|in the app)\b",
                 text,
                 re.IGNORECASE,
             )
@@ -1897,7 +1722,7 @@ def _store_sticky_topics(
     labels: Sequence[str],
     acts: Optional[Sequence[str]] = None,
 ) -> None:
-    topics = [l for l in labels if l != "handoff-escalation"]
+    topics = [l for l in labels if l in _STICKY_TOPIC_LABELS]
     key = _conversation_key(account_id, conversation_id)
     stored_acts = list(acts) if acts else _labels_to_acts(topics)
     with _last_labels_lock:
@@ -1912,6 +1737,7 @@ def clear_sticky_labels_for_tests() -> None:
         _last_topic_acts.clear()
     with _enrollment_cache_lock:
         _enrollment_cache.clear()
+        _completed_gig_cache.clear()
 
 
 def classify_conversation(
@@ -1929,7 +1755,10 @@ def classify_conversation(
     """Full classification: gates → sticky → act LLM → heuristic fallback."""
     evidence = list(tool_evidence if tool_evidence is not None else tool_evidence_this_turn())
     soft_facts = soft_tool_facts(evidence)
-    _, hard_tool_reasons = hard_labels_from_tools(evidence)
+    hard_tool_labels, hard_tool_reasons = hard_labels_from_tools(evidence)
+    proof_verdicts = [
+        l for l in hard_tool_labels if l in {"proof-rejection", "proof-acceptance"}
+    ]
     handoff = bool(handoff_requested) or any(
         str(e.get("tool") or "").strip() == "crwd_handoff" for e in evidence
     )
@@ -1939,33 +1768,62 @@ def classify_conversation(
     ]
 
     membership, enroll_text = _enrollment_summary(contact_id)
+    completed = _member_has_completed_gig(contact_id)
+    if _turn_completed_gig_from_tools(evidence):
+        completed = True
+    # Known incomplete → new-user; unknown → skip (do not guess).
+    is_new_user = completed is False
 
-    # Deterministic gates
+    def _finish(
+        topic_labels: Sequence[str],
+        *,
+        acts_out: Sequence[str],
+        confidence_out: str,
+        reasons_out: Sequence[str],
+        source_out: str,
+    ) -> ClassificationResult:
+        final = _finalize_labels(
+            topic_labels,
+            handoff,
+            proof_verdicts=proof_verdicts,
+            new_user=is_new_user,
+        )
+        reason_list = list(reasons_out)
+        if handoff and "handoff-escalation" not in reason_list and "tool:crwd_handoff" not in reason_list:
+            reason_list.append("tool:crwd_handoff" if handoff_requested else "handoff")
+        if is_new_user and "data:new-user" not in reason_list:
+            reason_list.append("data:new-user")
+        return ClassificationResult(
+            labels=final,
+            acts=list(acts_out),
+            confidence=confidence_out,
+            reasons=reason_list,
+            source=source_out,
+            tools=tool_keys,
+        )
+
+    # Deterministic gates → no topic (unapplied off-topic removed)
     if not (user_message or "").strip():
-        return ClassificationResult(
-            labels=_finalize_labels(["off-topic"], handoff),
-            acts=["chitchat"],
-            confidence="high",
-            reasons=["gate:empty->off-topic"],
-            source="heuristic",
-            tools=tool_keys,
+        return _finish(
+            [],
+            acts_out=["chitchat"],
+            confidence_out="high",
+            reasons_out=["gate:empty->no-topic"],
+            source_out="heuristic",
         )
 
-    if (
-        (_is_greeting_message(user_message) or _is_meta_identity_message(user_message))
-    ):
+    if _is_greeting_message(user_message) or _is_meta_identity_message(user_message):
         reason = (
-            "gate:meta->off-topic"
+            "gate:meta->no-topic"
             if _is_meta_identity_message(user_message)
-            else "gate:greeting->off-topic"
+            else "gate:greeting->no-topic"
         )
-        return ClassificationResult(
-            labels=_finalize_labels(["off-topic"], handoff),
-            acts=["chitchat"],
-            confidence="high",
-            reasons=[reason],
-            source="heuristic",
-            tools=tool_keys,
+        return _finish(
+            [],
+            acts_out=["chitchat"],
+            confidence_out="high",
+            reasons_out=[reason],
+            source_out="heuristic",
         )
 
     regex_text = _build_regex_context(user_message, conversation_history)
@@ -1977,16 +1835,13 @@ def classify_conversation(
     labels: List[str] = []
 
     sticky_list = [
-        l
-        for l in (sticky_topics or [])
-        if l in PREDEFINED_LABEL_TITLES and l != "handoff-escalation"
+        l for l in (sticky_topics or []) if l in _STICKY_TOPIC_LABELS
     ]
     sticky_act_list = [
         a for a in (sticky_acts or []) if a in DIALOGUE_ACTS
     ]
 
-    # Ambiguous / contextual follow-up → sticky (ignore soft tools for topic flips).
-    # Unauthorized / jailbreak turns skip sticky so scam is not diluted.
+    # Ambiguous / contextual follow-up → sticky applied topics only.
     if (
         not force_scam
         and _should_inherit_sticky(user_message, sticky_list, sticky_act_list)
@@ -2007,13 +1862,12 @@ def classify_conversation(
             if _is_contextual_followup(user_message)
             else "sticky:ambiguous_followup"
         )
-        return ClassificationResult(
-            labels=_finalize_labels(labels, handoff),
-            acts=acts,
-            confidence="low",
-            reasons=reasons + [reason],
-            source="sticky",
-            tools=tool_keys,
+        return _finish(
+            labels,
+            acts_out=acts,
+            confidence_out="low",
+            reasons_out=reasons + [reason],
+            source_out="sticky",
         )
 
     # Aux LLM is primary (accuracy-first). Pattern heuristics are fallback only.
@@ -2038,7 +1892,6 @@ def classify_conversation(
                 tool_gig_hints=gig_hints,
             )
             if not acts:
-                # Do not invent chitchat — leave empty so heuristic fallback runs.
                 reasons.append("llm:acts_ungrounded")
             else:
                 labels = acts_to_labels(
@@ -2061,10 +1914,14 @@ def classify_conversation(
         heur_labels, heur_reasons, heur_score, fallback_only = _heuristic_classify(
             regex_text, user_message, contact_id
         )
-        acts = _labels_to_acts(heur_labels) or ["chitchat"]
+        acts = _labels_to_acts(heur_labels) or (["chitchat"] if not heur_labels else [])
         labels = acts_to_labels(
             acts, user_message, contact_id, membership, sticky_topics=sticky_list
         )
+        # Prefer direct heuristic applied titles when acts map empty.
+        for hl in heur_labels:
+            if hl in APPLIED_LABEL_TITLES and hl not in labels:
+                labels.append(hl)
         labels = _apply_conflict_post_checks(
             labels, acts, user_message, soft_facts, membership
         )
@@ -2087,50 +1944,29 @@ def classify_conversation(
             source = "sticky"
 
     if not labels:
-        acts = ["chitchat"]
-        labels = ["off-topic"]
-        reasons.append("fallback:off-topic")
+        acts = acts or ["chitchat"]
+        reasons.append("fallback:no-topic")
 
+    # Scam is unapplied — keep act/reasons for observability, do not assign.
     if force_scam:
         if "scam" not in acts:
             acts.append("scam")
-        if "scam" not in labels:
-            labels.append("scam")
         for reason in hard_scam_reasons:
             if reason not in reasons:
                 reasons.append(reason)
-        if any(_is_unauthorized_hard_reason(r) for r in hard_scam_reasons):
-            labels = _strip_topics_for_unauthorized(labels)
-            acts = [
-                a
-                for a in acts
-                if a
-                not in {
-                    "browse_open_gigs",
-                    "enrolled_gig_help",
-                    "general_inquiry",
-                }
-            ]
-            if "scam" not in acts:
-                acts.append("scam")
-            if "scam" not in labels:
-                labels.append("scam")
+        labels = _strip_topics_for_unauthorized(labels)
+        labels = [l for l in labels if l != "scam"]
         if confidence == "low":
             confidence = "high"
         if source in {"heuristic", "sticky"}:
             source = "mixed" if labels else "heuristic"
 
-    final = _finalize_labels(labels, handoff)
-    if handoff and "handoff-escalation" not in reasons:
-        reasons.append("tool:crwd_handoff" if handoff_requested else "handoff")
-
-    return ClassificationResult(
-        labels=final,
-        acts=acts,
-        confidence=confidence,
-        reasons=reasons,
-        source=source,
-        tools=tool_keys,
+    return _finish(
+        labels,
+        acts_out=acts,
+        confidence_out=confidence,
+        reasons_out=reasons,
+        source_out=source,
     )
 
 
@@ -2286,9 +2122,10 @@ def labeling_reminder_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
         return None
     return {
         "context": (
-            "[Chatwoot triage] Labels are applied automatically after each turn "
-            "from member intent (dialogue acts) — not from context tool lookups. "
-            "`handoff-escalation` is added only when you call `crwd_handoff`. "
+            "[Chatwoot triage] Labels are applied automatically after each turn. "
+            "Applied topics: payment-issue, app-help; plus new-user (no completed "
+            "gig yet), proof-acceptance/proof-rejection from store_proof this turn, "
+            "and handoff-escalation when you call crwd_handoff. "
             "Do not call `chatwoot_labels` `assign_labels` during normal turns; "
             "the end-of-turn hook replaces labels. Do not mention labels to the member."
         ),

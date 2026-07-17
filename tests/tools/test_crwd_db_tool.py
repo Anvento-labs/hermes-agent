@@ -1402,8 +1402,9 @@ class TestIsGigCompletedFlag:
 
 class TestGigCompleteLabelExists:
     def test_gig_complete_is_a_predefined_label(self):
-        from plugins.platforms.chatwoot.labels import PREDEFINED_LABEL_TITLES
-        assert "gig-complete" in PREDEFINED_LABEL_TITLES
+        from plugins.platforms.chatwoot.labels import APPLIED_LABEL_TITLES
+
+        assert "gig-complete" in APPLIED_LABEL_TITLES
 
 
 class TestReviewLinkFlagTakesAScreenshotAtEveryStore:

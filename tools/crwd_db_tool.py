@@ -1680,6 +1680,46 @@ def _gig_proof_completion(user_id: str, crwd_id: str) -> Dict[str, Any]:
     }
 
 
+def user_has_completed_gig(user_id: str) -> Optional[bool]:
+    """True when the member has completed ≥1 gig (all required proofs accepted).
+
+    Payment/payout status is irrelevant. Returns ``None`` when Mongo is
+    unavailable or the lookup fails (caller should not guess ``new-user``).
+    """
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return None
+    if not (os.getenv("CRWD_MONGO_URI") or "").strip():
+        return None
+    try:
+        # Fast path: a store_proof that completed a gig sets this flag.
+        done = _db()[_COLL_PROOFS].find_one(
+            {"user_id": user_id, "is_gig_completed": True},
+            {"_id": 1},
+            max_time_ms=_MAX_TIME_MS,
+        )
+        if done:
+            return True
+        # Legacy / edge: recompute completion from memberships + accepted proofs.
+        crwd_ids: List[str] = []
+        for row in _db()[_COLL_MEMBERS].find(
+            _member_or_filter(user_id),
+            {"crwd_id": 1},
+            max_time_ms=_MAX_TIME_MS,
+        ).limit(50):
+            cid = str(row.get("crwd_id") or "").strip()
+            if cid and cid not in crwd_ids:
+                crwd_ids.append(cid)
+        for crwd_id in crwd_ids:
+            progress = _gig_proof_completion(user_id, crwd_id)
+            if progress.get("determinable") and progress.get("complete"):
+                return True
+        return False
+    except Exception:
+        logger.debug("user_has_completed_gig lookup failed", exc_info=True)
+        return None
+
+
 def _mark_proof_risk_scored(proof_record_id: str) -> str:
     """Flag a proof as risk-scored so it is never scored twice.
 

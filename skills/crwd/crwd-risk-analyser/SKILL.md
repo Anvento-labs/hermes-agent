@@ -162,7 +162,7 @@ and let the labeler tag it — it classifies `scam` itself from the message, so 
 don't need to apply that label; just set the band.
 
 Be conservative. A confused member pasting a weird link is not a scammer; a member
-asking an off-topic question is `off-topic`, not fraud. Score this when you'd be
+asking an unrelated / non-CRWD question is not fraud. Score this when you'd be
 comfortable defending it to the member's face — you won't have to, which is exactly
 why the bar is high.
 
