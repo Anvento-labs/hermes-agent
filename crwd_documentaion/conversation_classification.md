@@ -618,6 +618,25 @@ flash / mini models.
 
 Edit `~/.hermes/config.yaml` (or your profile’s `config.yaml`):
 
+**Amazon Nova Micro (recommended low-cost example):**
+
+Stage 1 only needs a short JSON act list (`temperature: 0`,
+`max_tokens: 250`). Nova Micro is a strong fit — text-only, very cheap, and
+fast enough for per-turn triage. Prefer Nova Lite
+(`us.amazon.nova-lite-v1:0`) only if Micro under-classifies ambiguous
+multi-intent turns.
+
+```yaml
+auxiliary:
+  chatwoot_labels:
+    provider: bedrock
+    model: us.amazon.nova-micro-v1:0
+    timeout: 15
+```
+
+Uses the same credentials as the main coach model when that provider is
+already configured. No extra API key is required under this task block.
+
 **OpenRouter + Gemini Flash (common choice):**
 
 ```yaml
