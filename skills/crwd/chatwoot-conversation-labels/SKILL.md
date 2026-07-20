@@ -35,7 +35,7 @@ no-ops gracefully there).
 | All `store_proof` this turn accepted | `proof-acceptance` |
 | Any `store_proof` this turn not accepted | `proof-rejection` |
 | You called `crwd_handoff` this turn | `handoff-escalation` |
-| Gig fully complete (`is_gig_completed`) | `gig-complete` (skill) |
+| This turn's `store_proof` set `is_gig_completed` | `gig-complete` |
 | Fraud risk band | `risk-low` … `risk-critical` (skill) |
 
 Unapplied titles (`mid-gig-support`, `proof-submission`, `gig-discovery`,
@@ -55,8 +55,11 @@ Labels are **applied automatically** after each turn via a Chatwoot plugin hook
 - **Data-first:** `new-user` while the member has not completed ≥1 gig (required
   proofs accepted). Payment status does not matter. Unknown DB → skip (no guess).
 - **Hard tools:** `crwd_handoff` → `handoff-escalation`; this-turn `store_proof`
-  → `proof-acceptance` / `proof-rejection`.
-- **Preserved:** `gig-complete`, `risk-*` (and prior handoff) survive replace.
+  → `proof-acceptance` / `proof-rejection` / `gig-complete` (when
+  `is_gig_completed`).
+- **Preserved:** `risk-*` survive replace. `handoff-escalation` is kept only
+  while conversation status is `open`; cleared when status is no longer `open`
+  (bot owns again).
 
 `create_labels_if_not_exists` bootstraps **applied** titles only.
 
@@ -71,7 +74,8 @@ Labels are **applied automatically** after each turn via a Chatwoot plugin hook
 
 - Payout late + page won't load → `["payment-issue", "app-help"]` (+ `new-user` if applicable)
 - Rejected proof this turn + handoff → `["proof-rejection", "handoff-escalation"]`
-- All proofs accepted this turn → `["proof-acceptance"]` (+ `gig-complete` when the skill assigns it)
+- All proofs accepted this turn → `["proof-acceptance"]` (+ `gig-complete` when
+  `is_gig_completed` this turn)
 
 ## Common Pitfalls
 

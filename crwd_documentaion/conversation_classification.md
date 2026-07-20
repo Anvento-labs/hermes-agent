@@ -4,19 +4,12 @@ Internal triage documentation for how Hermes automatically labels CRWD Coach
 conversations in Chatwoot. Labels are for **human agents filtering the inbox**.
 They are never mentioned to the member.
 
-> **Taxonomy update (applied vs unapplied):** `plugins/platforms/chatwoot/labels.py`
-> now splits `APPLIED_LABELS` (assigned + bootstrapped) from `UNAPPLIED_LABELS`
-> (kept for future reactivation; never assigned; never created on Chatwoot).
->
-> **Currently applied:** `payment-issue`, `app-help`, `new-user` (data-first: no
-> completed gig yet), `proof-acceptance` / `proof-rejection` (this-turn
-> `store_proof`), `handoff-escalation`, plus preserved `gig-complete` / `risk-*`.
->
-> **Unapplied (not assigned):** `mid-gig-support`, `proof-submission`,
-> `gig-discovery`, `general-inquiry`, `payment-payout`, `account-eligibility`,
-> `account-info`, `scam`, `off-topic`. Sections below that still name those
-> titles describe historical act detection; Stage 2 no longer emits them.
-> Prefer `skills/crwd/chatwoot-conversation-labels/` for the live applied set.
+Code splits the taxonomy in `plugins/platforms/chatwoot/labels.py`:
+
+- **`APPLIED_LABELS`** — assigned by auto-labeling / skills; bootstrapped into Chatwoot
+- **`UNAPPLIED_LABELS`** — kept for future reactivation; never assigned; never created on Chatwoot
+
+Agent-facing quick reference: `skills/crwd/chatwoot-conversation-labels/`.
 
 ---
 
@@ -33,7 +26,7 @@ They are never mentioned to the member.
 9. [Stage 1 — dialogue acts (aux LLM)](#9-stage-1--dialogue-acts-aux-llm)
 10. [Grounding filter](#10-grounding-filter)
 11. [Stage 2 — act → label map](#11-stage-2--act--label-map)
-12. [Enrollment and named-gig matching](#12-enrollment-and-named-gig-matching)
+12. [Data-first labels (`new-user`)](#12-data-first-labels-new-user)
 13. [Tool evidence (hard vs soft)](#13-tool-evidence-hard-vs-soft)
 14. [Conflict post-checks](#14-conflict-post-checks)
 15. [Heuristic fallback](#15-heuristic-fallback)
@@ -48,39 +41,36 @@ They are never mentioned to the member.
 
 ---
 
-
-
 ## 1. Purpose
 
 Every Chatwoot turn, after the coach finishes its reply, Hermes classifies the
-**member’s intent** and writes one or more predefined labels onto the
-conversation. That lets support staff filter by topic (payout, proof, mid-gig,
-scam, and so on) without the agent calling `chatwoot_labels` manually.
+**member’s intent** (and a few hard data/tool signals) and writes matching
+**applied** labels onto the conversation. That lets support staff filter by
+topic (payment, app help, new users, proof outcome, handoff, risk) without the
+agent calling `chatwoot_labels` manually.
 
 Design goals:
-
 
 | Goal                         | How it shows up in code                                         |
 | ---------------------------- | --------------------------------------------------------------- |
 | Accuracy over cost           | Aux LLM is primary; regex heuristics are fallback only          |
 | Member intent wins           | Soft tool lookups never force topic labels                      |
+| Narrow applied set           | Only titles in `APPLIED_LABEL_TITLES` are assigned               |
 | Stable triage set            | `replace=True` each turn so stale topics drop on a clear switch |
-| Continuity for short replies | Sticky labels/acts for “ok”, “yes”, “for it”, etc.              |
+| Continuity for short replies | Sticky for `payment-issue` / `app-help` on “ok”, “yes”, etc.    |
 | Handoff is explicit          | `handoff-escalation` only when `crwd_handoff` ran this turn     |
-
+| Proof / gig outcome is tool-driven | `proof-*` / `gig-complete` from this-turn `store_proof` |
+| Preserve skill-owned state   | `risk-*` survive replace; handoff only while status is `open` |
 
 Labels apply on **Chatwoot** turns only. Other platforms no-op.
 
 ---
 
-
-
 ## 2. Source of truth
-
 
 | Piece                            | Path                                                                    |
 | -------------------------------- | ----------------------------------------------------------------------- |
-| Predefined label titles / colors | `plugins/platforms/chatwoot/labels.py`                                  |
+| Applied / unapplied titles       | `plugins/platforms/chatwoot/labels.py`                                  |
 | Auto-classification pipeline     | `plugins/platforms/chatwoot/labels_auto.py`                             |
 | Chatwoot API assign / create     | `plugins/platforms/chatwoot/labels_tool.py`                             |
 | Hook registration                | `plugins/platforms/chatwoot/adapter.py`                                 |
@@ -88,69 +78,72 @@ Labels apply on **Chatwoot** turns only. Other platforms no-op.
 | Taxonomy examples                | `skills/crwd/chatwoot-conversation-labels/references/label-taxonomy.md` |
 | Unit tests                       | `tests/plugins/test_chatwoot_labels_auto.py`                            |
 
-
 Titles are **lowercase**. Chatwoot normalizes label titles to lowercase.
 
-There is **no per-turn numeric label cap** — every matching predefined label
-may apply (for example `payment-payout` + `app-help`).
+There is **no per-turn numeric label cap** — every matching **applied** label
+may apply (for example `payment-issue` + `app-help` + `new-user`).
 
 ---
-
-
 
 ## 3. When classification runs
 
 Classification is wired through three plugin hooks registered in
 `adapter.py`:
 
-
 | Hook             | Function                    | Role                                                              |
 | ---------------- | --------------------------- | ----------------------------------------------------------------- |
 | `pre_llm_call`   | `labeling_reminder_hook`    | Reset per-turn state; inject a short triage reminder into context |
-| `post_tool_call` | `record_tool_evidence_hook` | Record tool name/args; set handoff flag if `crwd_handoff`         |
+| `post_tool_call` | `record_tool_evidence_hook` | Record tool name/args; handoff + `store_proof` verdicts           |
 | `post_llm_call`  | `auto_label_hook`           | Classify + assign labels after the coach reply                    |
 
-
 The agent should **not** call `chatwoot_labels` `assign_labels` on normal
-turns. The end-of-turn hook replaces the full label set.
+turns. The end-of-turn hook replaces the full label set (while re-attaching
+preserved skill-owned labels).
 
 `pre_llm_call` reminder (Chatwoot only, when Chatwoot credentials exist):
 
-> Labels are applied automatically from member intent (dialogue acts) — not
-> from context tool lookups. `handoff-escalation` is added only when you call
-> `crwd_handoff`. Do not mention labels to the member.
+> Labels are applied automatically after each turn. Applied topics:
+> `payment-issue`, `app-help`; plus `new-user` (no completed gig yet),
+> `proof-acceptance` / `proof-rejection` / `gig-complete` from `store_proof`
+> this turn, and `handoff-escalation` when you call `crwd_handoff` (cleared
+> when conversation status is no longer `open`). Do not call
+> `chatwoot_labels` `assign_labels` during normal turns; the end-of-turn hook
+> replaces labels. Do not mention labels to the member.
 
 ---
-
-
 
 ## 4. Label taxonomy
 
-Defined in `PREDEFINED_LABELS` (`labels.py`):
+### 4.1 Applied (assigned + bootstrapped)
 
+Defined in `APPLIED_LABELS` (`labels.py`):
 
-| Label                 | Description                     | Typical trigger                                                                        |
-| --------------------- | ------------------------------- | -------------------------------------------------------------------------------------- |
-| `handoff-escalation`  | Human looped in                 | **Only** `crwd_handoff` this turn                                                      |
-| `proof-submission`    | Proof / receipt / submit        | Act `proof` or proof regex                                                             |
-| `mid-gig-support`     | Help on an **enrolled** gig     | Act `enrolled_gig_help`, or enrolled + proof; named enrolled gig remaps from browse    |
-| `gig-discovery`       | Browse / find available gigs    | Act `browse_open_gigs` (unless named enrolled gig); mid-gig language when not enrolled |
-| `general-inquiry`     | CRWD overview / onboarding      | Act `general_inquiry` — what CRWD is, how it works, apply, what gigs are, legitimacy   |
-| `payment-payout`      | Paid? when? Dot / refund        | Act `payout` or payment regex — **not** from `dot` alone                               |
-| `account-eligibility` | Can’t join / wrong state / age  | Act `eligibility` or eligibility regex                                                 |
-| `account-info`        | Account status, ban, “about me” | Act `account_status` or profile/account regex                                          |
-| `scam`                | Phishing / fraud / unauthorized / jailbreak | Act `scam`, scam regex, or **hard** unauthorized/jailbreak signal |
-| `app-help`            | Navigation / broken UI          | Act `app_nav` or app-help regex                                                        |
-| `off-topic`           | Non-CRWD / greeting / identity  | Act `chitchat`, gates, or fallback                                                     |
+| Label                | Description                                      | When it is applied                                                                 |
+| -------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `payment-issue`      | Any payment-related question                     | Act `payout` or payment regex (member text)                                        |
+| `app-help`           | App navigation / broken UI                       | Act `app_nav` or app-help regex                                                    |
+| `new-user`           | Member has not completed a gig yet               | **Data-first** — DB says no completed gig (unknown → skip, do not guess)           |
+| `proof-acceptance`   | All proofs stored this turn accepted             | Hard: this-turn `crwd_db.store_proof` (all statuses `accepted`)                    |
+| `proof-rejection`    | At least one proof this turn not accepted        | Hard: this-turn `store_proof` with any non-`accepted` status                       |
+| `handoff-escalation` | Human looped in                                  | Hard: `crwd_handoff` this turn; **preserved only while status is `open`**          |
+| `gig-complete`       | Gig finished this turn                           | Hard: this-turn `store_proof` with `is_gig_completed: true` (not preserved)        |
+| `risk-low` … `risk-critical` | Fraud risk band                         | Owned by `crwd-risk-analyser`; auto-labeler **preserves** (`risk-*` prefix)        |
 
+### 4.2 Unapplied (not assigned)
+
+Defined in `UNAPPLIED_LABELS`. Stage 1 may still emit related **dialogue acts**
+for observability, but Stage 2 / heuristics / finalize **never** assign these
+titles:
+
+`mid-gig-support`, `proof-submission`, `gig-discovery`, `general-inquiry`,
+`payment-payout` (superseded by `payment-issue`), `account-eligibility`,
+`account-info`, `scam`, `off-topic`.
 
 **Opt-out / stop-contact** (`stop texting`, `unsubscribe`, …) is **not** a
-topic label. It falls through to `off-topic` / sticky unless the agent calls
-`crwd_handoff` (which adds `handoff-escalation`).
+topic label. It yields no applied topic unless the agent calls `crwd_handoff`
+(which adds `handoff-escalation`).
 
 ---
-
-
 
 ## 5. End-to-end lifecycle
 
@@ -166,35 +159,33 @@ sequenceDiagram
   G->>H: pre_llm_call (reset state, reminder)
   G->>A: Run turn (tools + reply)
   loop Each tool call
-    A->>H: post_tool_call (evidence / handoff flag)
+    A->>H: post_tool_call (evidence / handoff / store_proof)
   end
   A->>G: Final assistant response
   G->>H: post_llm_call
   H->>H: classify_conversation(...)
-  H->>C: create labels if missing
-  H->>C: assign_labels(replace=True)
-  H->>H: store sticky labels + acts
+  H->>C: create applied labels if missing
+  H->>C: assign_labels(replace=True) + preserve risk / open-handoff
+  H->>H: store sticky topics (payment-issue / app-help)
 ```
-
-
 
 Per-turn state (ContextVars, cleared at turn start and after assign):
 
 - `_handoff_this_turn` — `True` if `crwd_handoff` ran
 - `_contact_id_this_turn` — Chatwoot contact / sender id
-- `_tool_evidence_this_turn` — list of `{tool, action, gig_hint?}`
+- `_tool_evidence_this_turn` — list of `{tool, action, gig_hint?, proof_status?, …}`
 
 In-memory sticky (process-local, keyed by `account_id:conversation_id`):
 
-- `_last_topic_labels` — last applied topic labels (handoff excluded)
+- `_last_topic_labels` — last applied sticky topics (`payment-issue`, `app-help` only)
 - `_last_topic_acts` — last dialogue acts
 
-Enrollment cache (TTL 60s): contact → `(enrolled, gig_name_set)` from Mongo via
-`CRWD_MONGO_URI` + `build_user_gig_status`.
+Caches (TTL 60s per contact):
+
+- Enrollment: contact → `(enrolled, gig_name_set)` — LLM context + legacy helpers
+- Completed gig: contact → `bool | None` — drives `new-user`
 
 ---
-
-
 
 ## 6. Two-stage pipeline
 
@@ -212,7 +203,8 @@ flowchart TD
   heur[Heuristic fallback]
   map[Stage 2 acts_to_labels]
   post[Conflict post-checks]
-  finalize[_finalize_labels + handoff]
+  finalize["_finalize_labels + handoff + proof + new-user"]
+  preserve[Re-attach preserved Chatwoot labels]
   assign[replace=True assign]
 
   hook --> gates
@@ -227,93 +219,89 @@ flowchart TD
   heur --> map
   map --> post
   post --> finalize
-  finalize --> assign
+  finalize --> preserve
+  preserve --> assign
 ```
-
-
 
 Entry point: `classify_conversation()` → `ClassificationResult` with
 `labels`, `acts`, `confidence`, `reasons`, `source`, `tools`.
 
 `auto_label_conversation()` wraps that: resolve conversation, load sticky,
-classify, bootstrap labels in Chatwoot, assign with `replace=True`, store sticky.
+classify, bootstrap **applied** labels in Chatwoot, merge preserved labels,
+assign with `replace=True`, store sticky.
 
 ---
-
-
 
 ## 7. Deterministic gates
 
-Before sticky / LLM / heuristics, these short-circuit to `off-topic`
-(`acts=["chitchat"]`, confidence `high`):
+Before sticky / LLM / heuristics, these short-circuit to **no topic labels**
+(`acts=["chitchat"]`, confidence `high`). They do **not** assign `off-topic`
+(unapplied).
 
-
-| Gate          | Condition                              | Reason tag                 |
-| ------------- | -------------------------------------- | -------------------------- |
-| Empty         | Member message blank                   | `gate:empty->off-topic`    |
-| Greeting      | Bare `hi` / `hello` / `good morning` … | `gate:greeting->off-topic` |
-| Meta identity | `who are you?` / `what can you do?` …  | `gate:meta->off-topic`     |
-
+| Gate          | Condition                              | Reason tag                |
+| ------------- | -------------------------------------- | ------------------------- |
+| Empty         | Member message blank                   | `gate:empty->no-topic`    |
+| Greeting      | Bare `hi` / `hello` / `good morning` … | `gate:greeting->no-topic` |
+| Meta identity | `who are you?` / `what can you do?` …  | `gate:meta->no-topic`     |
 
 Greetings must not inherit sticky from a coach welcome that says “get paid” /
-“gigs” (that would false-fire payment or discovery).
+“gigs” (that would false-fire `payment-issue`).
+
+`new-user` / handoff / proof verdicts can still attach in `_finalize_labels`
+after a gated turn when those signals apply.
 
 ---
 
-
-
 ## 8. Sticky inheritance
 
-Sticky preserves prior **topic labels and acts** across turns so short
+Sticky preserves prior **applied intent topics** across turns so short
 follow-ups stay on the same triage bucket.
+
+Only these titles participate: **`payment-issue`**, **`app-help`**
+(`_STICKY_TOPIC_LABELS`). Excluded from sticky memory: handoff, `gig-complete`,
+`new-user`, proof acceptance/rejection, and `risk-*`.
 
 Inheritance triggers (`_should_inherit_sticky`) when sticky exists **and**:
 
 1. **Ambiguous short reply** — empty, greeting/meta (already gated), or short
-  yes/no/ok/`that one` (max 24 chars), or ≤8 chars with no CRWD anchor; or
+   yes/no/ok/`that one` (max 24 chars), or ≤8 chars with no CRWD anchor; or
 2. **Contextual / deixis follow-up** — message ≤120 chars containing
-  `it` / `that` / `for it` / `about that` / …, **without** a strong new topic
-   signal (regex topic patterns, proof patterns, or named gig).
+   `it` / `that` / `for it` / `about that` / …, **without** a strong new topic
+   signal (payment / app-help regex, etc.).
 
 When inherited:
 
 - Act forced to `ambiguous_followup`
-- Stage 2 copies prior sticky topics (or `off-topic` if none remain)
+- Stage 2 copies prior sticky topics that are still in `_STICKY_TOPIC_LABELS`
 - Source = `sticky`; soft tools are ignored for topic flips
 
-Gig sticky also helps **ground** LLM `browse_open_gigs` / `gig-discovery` so
-pronoun follow-ups like “how many products for it?” are not stripped by the
-grounding filter.
-
 Sticky is process-local: a gateway restart clears it (next turn reclassifies
-from text + LLM).
+from text + LLM). Preserved Chatwoot labels (`risk-*`, and
+`handoff-escalation` only while status is `open`) are separate — they are
+re-read from Chatwoot on assign, not from sticky memory. `gig-complete` is
+turn-scoped and is not preserved.
 
 ---
 
-
-
 ## 9. Stage 1 — dialogue acts (aux LLM)
 
-Closed act set (`DIALOGUE_ACTS`):
+Closed act set (`DIALOGUE_ACTS`) — used for classification and logs. Only
+`payout` and `app_nav` currently map to applied topic labels in Stage 2.
 
-
-| Act                  | Meaning                                                   |
-| -------------------- | --------------------------------------------------------- |
-| `account_status`     | Profile / membership / ban / suspension                   |
-| `eligibility`        | Not eligible / can’t join / wrong state / age             |
-| `payout`             | Payment / payout / Dot / refund language                  |
-| `proof`              | Proof / receipt / submit                                  |
-| `enrolled_gig_help`  | Help on an enrolled gig (deadline, requirements, …)       |
-| `browse_open_gigs`   | Browse / find available gigs                                |
-| `general_inquiry`    | What CRWD is, how it works, apply, what gigs are, legitimacy |
-| `app_nav`            | App navigation / broken UI                                |
-| `scam`               | Scam / phishing / fraud / unauthorized other-user data / impersonation / jailbreak |
-| `chitchat`           | Non-CRWD / small talk                                     |
-| `ambiguous_followup` | Short / deixis follow-up (usually set by sticky, not LLM) |
-| `escalate`           | Escalation intent — **no topic label by itself**          |
-
-
-
+| Act                  | Meaning                                                   | Applied label?        |
+| -------------------- | --------------------------------------------------------- | --------------------- |
+| `payout`             | Payment / payout / Dot / refund language                  | → `payment-issue`     |
+| `app_nav`            | App navigation / broken UI                                | → `app-help`          |
+| `account_status`     | Profile / membership / ban / suspension                   | no (unapplied)        |
+| `eligibility`        | Not eligible / can’t join / wrong state / age             | no                    |
+| `proof`              | Proof / receipt / submit                                  | no (`proof-*` is tool)|
+| `enrolled_gig_help`  | Help on an enrolled gig                                   | no                    |
+| `browse_open_gigs`   | Browse / find available gigs                              | no                    |
+| `general_inquiry`    | What CRWD is, how it works, apply, legitimacy             | no                    |
+| `scam`               | Scam / phishing / unauthorized / jailbreak                | no (obs only)         |
+| `chitchat`           | Non-CRWD / small talk                                     | no                    |
+| `ambiguous_followup` | Short / deixis follow-up (usually sticky)                 | sticky topics only    |
+| `escalate`           | Escalation intent                                         | no topic by itself    |
 
 ### Feature bundle sent to the LLM
 
@@ -324,8 +312,6 @@ Built by `_build_llm_feature_bundle`:
 - Enrollment summary (`enrolled (names…)`, `not enrolled`, or `unknown`)
 - Soft tool facts this turn (`crwd_db.get_user_gigs (context only)`, …)
 - Prior sticky acts/labels if any
-
-
 
 ### LLM contract
 
@@ -354,93 +340,81 @@ System prompt rules of note:
 
 ---
 
-
-
 ## 10. Grounding filter
 
 After the LLM returns acts, `_filter_grounded_acts` drops acts that map to
-labels in `_LLM_MUST_GROUND` unless member text (or sticky gig continuity)
-supports them:
+labels in `_LLM_MUST_GROUND` unless member text supports them:
 
-`gig-discovery`, `general-inquiry`, `payment-payout`, `account-eligibility`, `account-info`, `scam`
+`payment-issue`, `app-help`
+
+(Other acts may pass through for observability but Stage 2 emits no applied
+label for them.)
 
 If **all** acts are stripped → treat as LLM failure path → heuristic fallback
 (`reasons` includes `llm:acts_ungrounded`). That prevents the model from
-inventing topics from coach prose or soft tools.
+inventing payment/app topics from coach prose or soft tools.
 
 ---
-
-
 
 ## 11. Stage 2 — act → label map
 
-`acts_to_labels()` is deterministic:
+`acts_to_labels()` is deterministic and emits **applied** titles only:
 
+| Act                  | Label(s)                                      |
+| -------------------- | --------------------------------------------- |
+| `payout`             | `payment-issue`                               |
+| `app_nav`            | `app-help`                                    |
+| `ambiguous_followup` | prior sticky topics in `_STICKY_TOPIC_LABELS` |
+| all other acts       | *(no applied topic)*                          |
 
-| Act                  | Label(s)                                                                                                             |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `account_status`     | `account-info`                                                                                                       |
-| `eligibility`        | `account-eligibility`                                                                                                |
-| `payout`             | `payment-payout`                                                                                                     |
-| `proof`              | `proof-submission`; + `mid-gig-support` if enrolled                                                                  |
-| `enrolled_gig_help`  | `mid-gig-support` if enrolled (and named gig matches when present); else `gig-discovery`; skip if enrollment unknown |
-| `browse_open_gigs`   | `mid-gig-support` if enrolled **and** named gig matches enrollment; else `gig-discovery`                             |
-| `general_inquiry`    | `general-inquiry`                                                                                                    |
-| `app_nav`            | `app-help`                                                                                                           |
-| `scam`               | `scam`                                                                                                               |
-| `chitchat`           | `off-topic`                                                                                                          |
-| `ambiguous_followup` | prior sticky topics, else `off-topic`                                                                                |
-| `escalate`           | *(no topic label)*                                                                                                   |
+Handoff, proof verdicts, and `new-user` are **not** produced here — they are
+attached later in `_finalize_labels`.
 
-
-Handoff is **not** produced here — it is attached later in `_finalize_labels`
-when `handoff_requested` / tool evidence says so.
+Enrollment / named-gig remaps that used to turn browse → mid-gig are **disabled
+for assignment** (`membership` is unused in Stage 2). Enrollment text still
+appears in the LLM feature bundle for better act quality.
 
 ---
 
+## 12. Data-first labels (`new-user`)
 
+`new-user` is **not** intent classification. It is attached in
+`_finalize_labels` when the member is known **not** to have completed at least
+one gig (all required proofs accepted).
 
-## 12. Enrollment and named-gig matching
+Lookup (`_member_has_completed_gig`):
 
-Enrollment comes from Mongo (`_member_enrollment`), **not** from soft tool
-calls:
+1. Resolve Chatwoot contact → CRWD user id
+2. `user_has_completed_gig(user_id)` via Mongo (`CRWD_MONGO_URI`)
+3. Cache 60 seconds per contact
+4. This-turn `store_proof` with `is_gig_completed=true` forces completed → drops
+   `new-user` for that turn
 
-1. Resolve Chatwoot contact → CRWD user id (`resolve_member_crwd_id`)
-2. `build_user_gig_status(user_id)` → active/enrolled gig names
-3. Cache result 60 seconds per contact
+| DB / evidence                         | Result                         |
+| ------------------------------------- | ------------------------------ |
+| Known incomplete (`completed is False`) | include `new-user`           |
+| Known complete                        | omit `new-user`                |
+| Unknown (no Mongo / lookup failed)    | omit — **do not guess**        |
 
-Named gig extraction (`_extract_gig_name`) looks for prefixes such as
-`details about` , `tell me about` , `next steps for` , quoted names, and
-`about the X gig`.
-
-Fuzzy match (`_gig_name_in_enrolled`):
-
-- Spaced normalized tokens (`smoke box bbq`)
-- Compact alphanumeric (`smokeboxbbq` ↔ `SmokeBox BBQ`)
-- Substring containment when compact length ≥ 4
-
-So: enrolled in “SmokeBox BBQ” + member says “details about smokeboxbbq” →
-even if Stage 1 said `browse_open_gigs`, Stage 2 remaps to `mid-gig-support`.
-
-If membership is **unknown** (no Mongo URI / lookup failed):
-
-- Mid-gig heuristics **suppress** inventing bare `gig-discovery`
-- Prefer under-tagging over mis-tagging
+Payment status does not affect `new-user`.
 
 ---
-
-
 
 ## 13. Tool evidence (hard vs soft)
 
 Collected on every `post_tool_call`:
 
+| Kind     | Tools / signals                         | Effect on labels                                      |
+| -------- | --------------------------------------- | ----------------------------------------------------- |
+| **Hard** | `crwd_handoff`                          | Forces `handoff-escalation`                           |
+| **Hard** | `crwd_db` `store_proof` this turn       | `proof-acceptance` or `proof-rejection` (mutually exclusive for the turn) |
+| **Soft** | `crwd_db.*` lookups, `dot`, …           | Strings in the LLM feature bundle only                |
 
-| Kind     | Tools                 | Effect on labels                       |
-| -------- | --------------------- | -------------------------------------- |
-| **Hard** | `crwd_handoff` only   | Forces `handoff-escalation`            |
-| **Soft** | `crwd_db.`*, `dot`, … | Strings in the LLM feature bundle only |
+Proof verdict rules (`proof_verdict_labels_from_tools`):
 
+- Any non-`accepted` status among this-turn stores → `proof-rejection`
+- Else all accepted (≥1) → `proof-acceptance`
+- No `store_proof` this turn → neither label
 
 Soft descriptions examples:
 
@@ -448,89 +422,46 @@ Soft descriptions examples:
 - `list_active_gigs` → discovery-style context only
 - `dot` → “dot payout lookup (context only)”
 
-Gig name/id from tool args may appear as
-`crwd_db.get_gig_details — looked up SmokeBox BBQ (context only)`.
+Soft tools never force applied topics. Fallback: if the ContextVar flag was
+missed, `_handoff_in_current_turn` scans the current turn’s messages for
+`crwd_handoff`.
 
-**Never** force `mid-gig-support` or `gig-discovery` from soft tools alone.
-That fixes cases like “give details about me” where the coach still called
-`get_user_gigs` for context — member intent stays `account-info`.
+### Hard scam signals (observability only)
 
-Fallback: if the ContextVar flag was missed, `_handoff_in_current_turn`
-scans the current turn’s assistant/tool messages for `crwd_handoff`.
-
-### Hard unauthorized / jailbreak → `scam`
-
-In addition to tool hard labels, `classify_conversation()` runs
-`hard_scam_signals()` after gates:
-
-| Signal | Source | Effect |
-| ------ | ------ | ------ |
-| Cross-user / unauthorized data ask | `coach_context.message_requests_other_member` / `cross_user_request_active` | Force-include `scam` |
-| Jailbreak / impersonation phrasing | Regex in `labels_auto` | Force-include `scam` |
-
-Examples that force `scam`: foreign ObjectId name/gigs/account asks, "someone
-else's account", "list participants of Crown of Glory", "provide his number",
-"ignore previous instructions", "pretend I am user …".
-Self ObjectId asks, `my phone number`, and gig-entity lookups
-(`tell me about gig <id>`, `details about Crown of Glory`) do **not**.
-Sticky inheritance is skipped on these turns so the scam tag is not diluted.
-Unauthorized hard-scam also **strips** `gig-discovery` / `mid-gig-support` /
-`general-inquiry` so a named gig in a participant-list ask cannot keep discovery.
+`hard_scam_signals()` still detects unauthorized / jailbreak phrasing and may
+set act `scam` + reasons for logs. The **`scam` label is unapplied** — it is
+stripped before assign and never written to Chatwoot.
 
 ---
-
-
 
 ## 14. Conflict post-checks
 
-`_apply_conflict_post_checks` runs after Stage 2:
-
-1. If member-primary topics (`account-info`, `account-eligibility`,
-  `payment-payout`, `scam`, `app-help`) are present **and**
-   `mid-gig-support` appears without acts `enrolled_gig_help` or `proof` →
-   drop mid-gig.
-2. Profile/self regex (`details about me`, `my account`, …) + mid-gig without
-  `proof` → drop mid-gig; ensure `account-info`.
-3. Mid-gig while membership says not enrolled (and not proof) → drop mid-gig;
-  may add `gig-discovery` when act was `enrolled_gig_help`.
+`_apply_conflict_post_checks` runs after Stage 2. With the narrowed applied
+set it mainly filters the candidate list to `APPLIED_LABEL_TITLES` (legacy
+mid-gig / discovery conflict rules no longer emit labels).
 
 ---
 
-
-
 ## 15. Heuristic fallback
 
-Used when LLM is disabled (`display.platforms.chatwoot.labels.llm_fallback: false`), call fails, or acts were fully ungrounded.
+Used when LLM is disabled (`display.platforms.chatwoot.labels.llm_fallback: false`),
+call fails, or acts were fully ungrounded.
 
 Inputs:
 
 - **Regex text**: current member message; if ambiguous/contextual, concatenated
-with **one prior member** message. **No coach prose.**
-- Scored `_LABEL_RULES` patterns (payment, eligibility, account, scam,
-app-help, discovery, off-topic)
-- Separate proof / mid-gig pattern sets with enrollment logic
-(`_apply_proof_and_mid_gig_labels`)
+  with **one prior member** message. **No coach prose.**
+- Scored `_LABEL_RULES` for **applied** intent only: `payment-issue`, `app-help`
+- Legacy proof / mid-gig pattern helpers remain for reasons /
+  enrollment-unknown suppress behavior but **do not append unapplied titles**
 
-Fallbacks when nothing strong matches:
-
-
-| Condition                                | Result                   |
-| ---------------------------------------- | ------------------------ |
-| Word `gig` and not already `app-help`    | `gig-discovery` (weak)   |
-| CRWD anchor (`crwd`, `gig`, `payout`, …) | `gig-discovery` (weaker) |
-| Mid-gig language but enrollment unknown  | no discovery invention   |
-| Else                                     | `off-topic`              |
-
-
-Heuristic labels are then re-mapped through `acts_to_labels` + conflict
-post-checks so enrollment rules stay consistent.
+Fallbacks when nothing strong matches: **no topic** (`fallback:no-topic` /
+`heuristic:fallback->no-topic`) — not `off-topic` or `gig-discovery`.
 
 If confidence stays low and the message still looks sticky-eligible, sticky
 inheritance can still win (`sticky:previous_topics`).
 
 ---
-
-
 
 ## 16. Assignment to Chatwoot
 
@@ -538,24 +469,28 @@ inheritance can still win (`sticky:previous_topics`).
 
 1. Skip if Chatwoot not configured or no conversation id
 2. Classify (with sticky + LLM allowed)
-3. `_create_labels_if_not_exists(account_id)` — bootstrap taxonomy
-4. `_assign_labels(..., replace=True)` — **full set replaced each turn**
-5. On success, `_store_sticky_topics` (labels without handoff + acts)
-6. Log applied labels, acts, confidence, source, tools, reasons
+3. `_create_labels_if_not_exists(account_id)` — bootstrap **applied** titles only
+4. Merge `_preserved_labels` from the live conversation:
+   - `handoff-escalation` only if conversation status is `open`
+   - any `risk-*`
+   - (`gig-complete` is **not** preserved — turn-scoped only)
+5. `_assign_labels(..., replace=True)` — **full set replaced each turn**
+6. On success, `_store_sticky_topics` for `payment-issue` / `app-help` only
+   (preserved labels intentionally **not** folded into sticky)
+7. Log applied labels, acts, confidence, source, tools, reasons
 
 `_finalize_labels`:
 
-- Keep only titles in `PREDEFINED_LABEL_TITLES`
-- Strip any accidental `handoff-escalation` from topics, then append it if
-handoff was requested this turn
+- Keep only titles in `APPLIED_LABEL_TITLES`
+- Drop non-sticky / risk titles from the topic bag, then append:
+  - proof verdicts / `gig-complete` this turn
+  - `new-user` when data-first says incomplete
+  - `handoff-escalation` when handoff was requested this turn
 
-Clear topic switch ⇒ previous topics disappear because of `replace=True`.
-Low-confidence sticky already folded prior topics into the new set before
-assign.
+Clear topic switch ⇒ previous intent topics disappear because of `replace=True`.
+Preserved risk / open-handoff labels are re-attached after classify so they are not wiped.
 
 ---
-
-
 
 ## 17. Configuration
 
@@ -600,8 +535,8 @@ Notes:
   the aux LLM is the **primary** path when enabled — heuristics are the
   fallback.
 - Requires Chatwoot credentials (`check_chatwoot_labels_requirements`).
-- Enrollment-aware mid-gig labeling needs `CRWD_MONGO_URI` (and successful
-  contact → user id resolution).
+- `new-user` needs `CRWD_MONGO_URI` (and successful contact → user id
+  resolution). Unknown membership → label omitted.
 
 ### 17.1 Using a low-cost LLM for classification
 
@@ -736,6 +671,7 @@ display:
 
 No `auxiliary.chatwoot_labels` model is called. Accuracy drops on ambiguous or
 multi-intent messages; use this only if cost matters more than triage precision.
+Heuristics only emit `payment-issue` / `app-help` (plus finalize hard/data labels).
 
 #### What stays on the main model
 
@@ -774,8 +710,6 @@ These still use the main coach model (or their own auxiliary slots):
 
 ---
 
-
-
 ## 18. Observability
 
 Classification observability is **process logs only** — never Chatwoot private
@@ -793,98 +727,88 @@ Successful apply (INFO):
 
 `reasons` are machine tags such as:
 
-- `gate:greeting->off-topic`
+- `gate:greeting->no-topic`
 - `sticky:contextual_followup`
 - `llm_act:payout`
 - `llm:acts_ungrounded`
-- `heuristic:proof+enrolled`
+- `heuristic:payment-issue`
 - `tool:crwd_handoff`
-- `fallback:off-topic`
+- `tool:store_proof:acceptance` / `tool:store_proof:rejection`
+- `data:new-user`
+- `fallback:no-topic`
+
+Acts like `scam` / `browse_open_gigs` may appear in `acts=` for debugging even
+when no matching Chatwoot label is assigned.
 
 ---
-
-
 
 ## 19. Worked examples
 
-
-| Member message                    | Enrollment               | Expected labels                       | Path notes                                            |
-| --------------------------------- | ------------------------ | ------------------------------------- | ----------------------------------------------------- |
-| `hi`                              | any                      | `off-topic`                           | Greeting gate                                         |
-| `Who are you?`                    | any                      | `off-topic`                           | Meta gate — not gig-discovery                         |
-| `What is CRWD?`                   | any                      | `general-inquiry`                     | Platform overview                                     |
-| `How do I apply?`                 | any                      | `general-inquiry`                     | Onboarding / apply                                    |
-| `What gigs are near me?`          | enrolled or not          | `gig-discovery`                       | Browse / discovery                                    |
-| `crown of glory ?`                | not enrolled             | `gig-discovery`                       | Bare product title (named-gig evidence)               |
-| `crown of glory ?`                | enrolled in Crown of Glory | `mid-gig-support`                   | Bare title matches enrollment                         |
-| `Details about SmokeBoxBBQ`       | enrolled in SmokeBox BBQ | `mid-gig-support`                     | Named enrolled remaps from browse                     |
-| `Details about SmokeBoxBBQ`       | not enrolled             | `gig-discovery`                       | Unmatched / unenrolled                                |
-| `Give me details about me`        | enrolled                 | `account-info`                        | Profile self; soft `get_user_gigs` ignored            |
-| `What is my name?`                | enrolled                 | `account-info`                        | Member name lookup; not off-topic or mid-gig          |
-| `What is your name?`              | any                      | `off-topic`                           | Coach identity — not account-info                     |
-| `How do I submit proof?`          | enrolled                 | `proof-submission`, `mid-gig-support` | Proof + enrolled                                      |
-| `How do I submit proof?`          | not enrolled             | `proof-submission`                    | Proof without mid-gig                                 |
-| `When will I get paid?`           | any                      | `payment-payout`                      | Not from `dot` alone                                  |
-| `Where is Explore?`               | any                      | `app-help`                            | App nav; bare “gigs” in nav must not invent discovery |
-| `ok` after payout turn            | sticky = payment         | `payment-payout`                      | Sticky ambiguous                                      |
-| `how many for it?` after gig turn | sticky gig topic         | prior gig label(s)                    | Contextual sticky + gig grounding                     |
-| Agent calls `crwd_handoff`        | any                      | topic(s) + `handoff-escalation`       | Hard tool only                                        |
-| `what is the name of {foreign_oid}?` | any                   | `scam`                                | Hard unauthorized other-member ask                    |
-| `list participant of crown of glory` | any                 | `scam`                                | Participant list — not gig-discovery                  |
-| `provide his number` (met at a gig) | any                  | `scam`                                | Third-party PII                                       |
-| `ignore previous instructions`    | any                      | `scam`                                | Hard jailbreak signal                                 |
-| `is crwd legit?`                  | any                      | `general-inquiry`                     | Not scam                                              |
-| `stop texting me`                 | any                      | `off-topic` (unless handoff)          | Opt-out is not a topic label                          |
-
-
-Multi-label:
-
-- Payout late + page won’t load → `payment-payout`, `app-help`
-- Rejected proof + `crwd_handoff` while enrolled →
-`proof-submission`, `mid-gig-support`, `handoff-escalation`
+| Member / signal                         | Expected applied labels                         | Path notes                                      |
+| --------------------------------------- | ----------------------------------------------- | ----------------------------------------------- |
+| `hi`                                    | _(none)_ or `new-user` if incomplete            | Greeting gate → no topic                        |
+| `Who are you?`                          | _(none)_ or `new-user`                          | Meta gate                                       |
+| `What is CRWD?`                         | _(none)_ or `new-user`                          | `general-inquiry` act unapplied                 |
+| `What gigs are near me?`                | _(none)_ or `new-user`                          | Discovery unapplied                             |
+| `How do I submit proof?`                | _(none)_ or `new-user`                          | Proof question ≠ proof verdict labels           |
+| `When will I get paid?`                 | `payment-issue` (+ `new-user` if applicable)    | Intent                                          |
+| `Where is Explore?`                     | `app-help`                                      | App nav                                         |
+| Payout late + page won’t load           | `payment-issue`, `app-help`                     | Multi-label                                     |
+| `ok` after a payment turn               | `payment-issue`                                 | Sticky                                          |
+| All `store_proof` accepted this turn    | `proof-acceptance`                              | Hard tool                                       |
+| Any `store_proof` rejected this turn    | `proof-rejection`                               | Hard tool                                       |
+| `store_proof` with `is_gig_completed`   | `gig-complete` (+ proof verdict)                | Hard tool; **not** preserved                    |
+| Agent calls `crwd_handoff`              | topic(s) + `handoff-escalation`                 | Hard tool; preserved while status `open`        |
+| Member never completed a gig (DB known) | includes `new-user`                             | Data-first                                      |
+| Gig completed / unknown DB              | no `new-user`                                   | Complete or do-not-guess                        |
+| `stop texting me`                       | _(none)_ unless handoff                         | Opt-out is not a topic                          |
+| Jailbreak / foreign-user PII ask        | _(no `scam` label)_                             | Act/reasons only; label unapplied               |
+| Skill sets `risk-*`                     | preserved across replace turns                  | `_preserved_labels`                             |
 
 ---
-
-
 
 ## 20. Common pitfalls
 
 1. **Expecting** `handoff-escalation` **from frustration text alone** — the tag
-  follows `crwd_handoff`, not keywords.
-2. **Assuming** `get_user_gigs` **/** `list_active_gigs` **/** `dot` **set inbox topics** —
-  soft context only; member intent wins.
-3. **Expecting old topics after a clear switch** — `replace=True` drops them.
-4. **Treating coach welcome as discovery/payment** — greetings/meta are gated;
-  coach replies are truncated context for the LLM and ignored by heuristics.
-5. **Mentioning labels to the member** — internal triage only.
-6. **Relying on sticky across process restarts** — sticky is in-memory only.
-7. **Missing mid-gig without Mongo** — enrollment unknown → conservative
-  under-tagging.
+   follows `crwd_handoff`, not keywords.
+2. **Expecting unapplied titles** (`gig-discovery`, `scam`, `off-topic`, …) —
+   they will not appear on conversations.
+3. **Assuming** `get_user_gigs` **/** `list_active_gigs` **/** `dot` **set inbox topics** —
+   soft context only; member intent wins.
+4. **Expecting proof topic from wording alone** — `proof-acceptance` /
+   `proof-rejection` require this-turn `store_proof`, not “how do I submit proof?”.
+5. **Expecting old topics after a clear switch** — `replace=True` drops them
+   (except `risk-*`, and `handoff-escalation` only while status is `open`).
+6. **Treating coach welcome as payment** — greetings/meta are gated; coach
+   replies are truncated context for the LLM and ignored by heuristics.
+7. **Mentioning labels to the member** — internal triage only.
+8. **Relying on sticky across process restarts** — sticky is in-memory only;
+   preserved Chatwoot labels survive because they are re-read from the API.
+9. **Guessing `new-user` without Mongo** — unknown completed-gig state skips
+   the label.
+10. **Expecting `gig-complete` to stick** — it is turn-scoped like proof
+    verdicts; later turns drop it under `replace=True`.
 
 ---
-
-
 
 ## 21. Related skills and tests
 
 - Skill: `skills/crwd/chatwoot-conversation-labels/SKILL.md`
 - Examples: `skills/crwd/chatwoot-conversation-labels/references/label-taxonomy.md`
+- Proof / risk owners: `skills/crwd/crwd-proof-validator/`, `skills/crwd/crwd-risk-analyser/`
 - Tests: `scripts/run_tests.sh tests/plugins/test_chatwoot_labels_auto.py`
 
 For agent-facing procedure (bootstrap labels, handoff behavior, verification
 checklist), prefer the skill. This document is the system-level explanation of
 **how** auto-classification works in code.
-)
+
+---
 
 ## 22. Purpose of `pre_llm_call`
 
 `pre_llm_call` is a **once-per-turn plugin hook** that runs **before** the coach’s LLM/tool loop starts. In Hermes it is special: unlike most hooks (fire-and-forget), its return value can **inject ephemeral context into the current user message** for that turn only.
 
 It does **not** change the cached system prompt — context is appended to the turn’s user message so prompt caching stays intact.
-
----
-
-
 
 ### In conversation classification (Chatwoot)
 
@@ -894,64 +818,40 @@ The labels plugin registers `labeling_reminder_hook` as a `pre_llm_call` handler
 
 At the start of every turn it clears and re-seeds ContextVars so leftover state from a previous turn cannot leak:
 
-
 | Reset                      | Why                                                                       |
 | -------------------------- | ------------------------------------------------------------------------- |
 | `_handoff_this_turn`       | So `handoff-escalation` only applies if `crwd_handoff` runs **this** turn |
-| `_contact_id_this_turn`    | Fresh Chatwoot contact / sender id for enrollment lookup later            |
-| `_tool_evidence_this_turn` | Empty bag for soft tool facts collected during this turn                  |
+| `_contact_id_this_turn`    | Fresh Chatwoot contact / sender id for completed-gig / enrollment lookup  |
+| `_tool_evidence_this_turn` | Empty bag for soft tools + `store_proof` verdicts this turn               |
 
-
-Then, if `sender_id` is present, it stores that contact id for later use by `post_llm_call` / enrollment.
+Then, if `sender_id` is present, it stores that contact id for later use by `post_llm_call`.
 
 Without this reset, a prior turn’s handoff flag or tool evidence could incorrectly influence labeling.
 
 #### 2. Remind the coach model how labeling works
 
-On Chatwoot (and only when Chatwoot credentials are configured), it returns:
-
-```python
-{"context": "[Chatwoot triage] Labels are applied automatically after each turn ..."}
-```
-
-That text is injected into the **current user message** so the model knows:
+On Chatwoot (and only when Chatwoot credentials are configured), it returns context naming the **applied** set (`payment-issue`, `app-help`, `new-user`, proof verdicts, handoff) so the model knows:
 
 - Labels are applied **automatically** after the turn (`post_llm_call`)
-- Topics come from **member intent**, not from soft tool lookups (`get_user_gigs`, etc.)
-- `handoff-escalation` only when it calls `crwd_handoff`
 - Do **not** call `chatwoot_labels` `assign_labels` on normal turns
 - Do **not** mention labels to the member
 
 If the platform isn’t Chatwoot, or Chatwoot isn’t configured, it returns `None` (no injection).
 
----
-
-
-
 ### What it does *not* do
 
 `pre_llm_call` does **not** classify or write Chatwoot labels. Classification happens in `post_llm_call` (`auto_label_hook`) after the reply (and after tools were recorded via `post_tool_call`).
 
----
-
-
-
 ### Broader Chatwoot picture
 
 Chatwoot registers **two** `pre_llm_call` hooks:
-
 
 | Hook                     | Purpose                                                       |
 | ------------------------ | ------------------------------------------------------------- |
 | `member_context_hook`    | Inject authenticated CRWD `user_id` + gig-scope routing rules |
 | `labeling_reminder_hook` | Reset label state + triage reminder                           |
 
-
 Both run before the LLM sees the turn; both may inject `{"context": "..."}` into the user message.
-
----
-
-
 
 ### Timing relative to the other label hooks
 
@@ -962,9 +862,9 @@ pre_llm_call          ← reset state + inject reminder (and member context)
     ↓
 LLM / tool loop
     ↓
-post_tool_call        ← record tools / handoff flag
+post_tool_call        ← record tools / handoff / store_proof
     ↓
-post_llm_call         ← classify + assign labels (replace=True)
+post_llm_call         ← classify + assign labels (replace=True + preserve)
 ```
 
 **Short version:** `pre_llm_call` for labeling is the **turn start setup** — clean slate for handoff/tools/contact, and a short instruction so the agent doesn’t fight the auto-labeler.

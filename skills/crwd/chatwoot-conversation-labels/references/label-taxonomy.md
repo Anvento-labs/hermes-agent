@@ -25,18 +25,21 @@ one gig (all required proofs accepted). Payment may or may not have been receive
 - First-time member asking anything → includes `new-user` when DB confirms no completed gig
 - After a gig completes (`is_gig_completed` / completed-gig lookup) → `new-user` drops
 
-## proof-acceptance / proof-rejection
+## proof-acceptance / proof-rejection / gig-complete
 
 From `store_proof` **this turn** only (not member wording).
 
 - All proofs stored this turn `accepted` → `proof-acceptance`
 - Any proof not accepted → `proof-rejection`
-- Mutually exclusive for the turn; not preserved forever
+- `is_gig_completed: true` on this turn → `gig-complete`
+- Mutually exclusive proof verdicts for the turn; none of these are preserved forever
 
 ## handoff-escalation
 
-Only when `crwd_handoff` runs this turn (then preserved on later turns).
+When `crwd_handoff` runs this turn. Kept while conversation status is `open`;
+cleared when status is no longer `open` (bot owns again, typically `pending`).
 
-## gig-complete / risk-*
+## risk-*
 
-Owned by `crwd-proof-validator` / `crwd-risk-analyser`. Auto-labeler preserves them.
+Owned by `crwd-risk-analyser`. Auto-labeler preserves the current band across
+replace turns.

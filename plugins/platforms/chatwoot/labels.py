@@ -21,7 +21,7 @@ APPLIED_LABELS: List[Dict[str, Any]] = [
     },
     {
         "title": "gig-complete",
-        "description": "Every proof the gig requires has been accepted",
+        "description": "This turn completed a gig (all required proofs accepted)",
         "color": "#16a085",
     },
     {

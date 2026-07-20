@@ -232,6 +232,23 @@ class TestNewUser:
         )
         assert "new-user" not in labels
         assert "proof-acceptance" in labels
+        assert "gig-complete" in labels
+
+    def test_gig_complete_only_when_is_gig_completed(self):
+        evidence = [
+            {
+                "tool": "crwd_db",
+                "action": "store_proof",
+                "proof_status": "accepted",
+                "is_gig_completed": "false",
+            },
+        ]
+        labels = auto.classify_conversation_labels(
+            "here is my receipt",
+            tool_evidence=evidence,
+        )
+        assert "proof-acceptance" in labels
+        assert "gig-complete" not in labels
 
 
 class TestDialogueActMapping:
@@ -319,7 +336,7 @@ class TestAutoLabelConversation:
         assert assign.call_args[0][2] == out["classified"]
         assert assign.call_args[1]["replace"] is True
 
-    def test_sticky_handoff_preserved_on_later_turn(self, chatwoot_env):
+    def test_handoff_preserved_while_status_open(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
             auto, "_preserved_labels", return_value=["handoff-escalation"],
         ), patch.object(
@@ -334,6 +351,23 @@ class TestAutoLabelConversation:
             out = auto.auto_label_conversation("ok thank you", handoff_requested=False)
         assert "handoff-escalation" in out["classified"]
         assert "handoff-escalation" in assign.call_args[0][2]
+
+    def test_handoff_cleared_when_not_preserved(self, chatwoot_env):
+        """When status is no longer open, _preserved_labels omits handoff."""
+        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
+            auto, "_preserved_labels", return_value=[],
+        ), patch.object(
+            auto, "_create_labels_if_not_exists",
+            return_value={"success": True, "existing": []},
+        ), patch.object(
+            auto, "_llm_fallback_enabled", return_value=False,
+        ), patch.object(
+            auto, "_assign_labels",
+            return_value={"success": True, "labels": [], "error": None},
+        ) as assign:
+            out = auto.auto_label_conversation("ok thank you", handoff_requested=False)
+        assert "handoff-escalation" not in out["classified"]
+        assert "handoff-escalation" not in assign.call_args[0][2]
 
     def test_risk_band_survives_a_later_turn(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
@@ -350,9 +384,9 @@ class TestAutoLabelConversation:
             auto.auto_label_conversation("ok thanks", handoff_requested=False)
         assert "risk-high" in assign.call_args[0][2]
 
-    def test_gig_complete_survives_a_later_turn(self, chatwoot_env):
+    def test_gig_complete_does_not_survive_a_later_turn(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=["gig-complete"],
+            auto, "_preserved_labels", return_value=[],
         ), patch.object(
             auto, "_create_labels_if_not_exists",
             return_value={"success": True, "existing": []},
@@ -363,11 +397,11 @@ class TestAutoLabelConversation:
             return_value={"success": True, "labels": [], "error": None},
         ) as assign:
             auto.auto_label_conversation("thanks", handoff_requested=False)
-        assert "gig-complete" in assign.call_args[0][2]
+        assert "gig-complete" not in assign.call_args[0][2]
 
     def test_preserved_labels_stay_out_of_sticky_topic_memory(self, chatwoot_env):
         with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=["risk-high", "gig-complete"],
+            auto, "_preserved_labels", return_value=["risk-high"],
         ), patch.object(
             auto, "_create_labels_if_not_exists",
             return_value={"success": True, "existing": []},
@@ -380,12 +414,19 @@ class TestAutoLabelConversation:
             auto.auto_label_conversation("when will I get paid?")
         stored = auto._get_sticky_topics("1", "42")
         assert "risk-high" not in stored
-        assert "gig-complete" not in stored
         assert "payment-issue" in stored
 
 
 class TestPreservedLabelsHelper:
-    def test_only_handoff_gig_complete_and_risk(self):
+    def _labels_then_status(self, labels_payload, status):
+        """Return side_effect for _api_request: labels GET then conversation GET."""
+        def _side_effect(method, path, body=None):
+            if path.endswith("/labels"):
+                return True, labels_payload, ""
+            return True, {"payload": {"status": status}}, ""
+        return _side_effect
+
+    def test_handoff_preserved_when_status_open(self):
         payload = {
             "payload": [
                 "payment-issue",
@@ -397,7 +438,33 @@ class TestPreservedLabelsHelper:
         }
         with patch(
             "plugins.platforms.chatwoot.labels_tool._api_request",
-            return_value=(True, payload, ""),
+            side_effect=self._labels_then_status(payload, "open"),
         ):
             out = auto._preserved_labels("1", "42")
-        assert sorted(out) == ["gig-complete", "handoff-escalation", "risk-high"]
+        assert sorted(out) == ["handoff-escalation", "risk-high"]
+
+    def test_handoff_dropped_when_status_pending(self):
+        payload = {
+            "payload": [
+                "handoff-escalation",
+                "risk-high",
+                "gig-complete",
+            ]
+        }
+        with patch(
+            "plugins.platforms.chatwoot.labels_tool._api_request",
+            side_effect=self._labels_then_status(payload, "pending"),
+        ):
+            out = auto._preserved_labels("1", "42")
+        assert out == ["risk-high"]
+        assert "handoff-escalation" not in out
+        assert "gig-complete" not in out
+
+    def test_gig_complete_never_preserved(self):
+        payload = {"payload": ["gig-complete", "risk-low"]}
+        with patch(
+            "plugins.platforms.chatwoot.labels_tool._api_request",
+            side_effect=self._labels_then_status(payload, "open"),
+        ):
+            out = auto._preserved_labels("1", "42")
+        assert out == ["risk-low"]

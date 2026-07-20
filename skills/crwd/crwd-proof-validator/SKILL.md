@@ -227,15 +227,17 @@ Read the result:
   proof is now complete. **The tool decides this, not you** — it's a fact about
   what's on file. Every earlier proof stays `false`.
 
-### 8a. When the gig completes, label the conversation
+### 8a. Gig-complete label (automatic)
 
-If `store_proof` returned `is_gig_completed: true`, call
-`chatwoot_labels(action="assign_labels", labels=["gig-complete"])`. It merges, so
-the triage labels survive. Outside Chatwoot the tool no-ops — carry on.
+When `store_proof` returns `is_gig_completed: true`, the Chatwoot auto-label
+hook adds `gig-complete` for **this turn only** (same pattern as
+`proof-acceptance` / `proof-rejection`). **Do not** call `chatwoot_labels` to
+assign it — the end-of-turn hook replaces labels and will drop `gig-complete`
+on later turns.
 
-**Do not** manually assign `proof-acceptance` / `proof-rejection` — the Chatwoot
-auto-label hook derives those from this turn's `store_proof` results (all
-accepted → `proof-acceptance`; any non-accepted → `proof-rejection`).
+**Do not** manually assign `proof-acceptance` / `proof-rejection` either — the
+hook derives those from this turn's `store_proof` results (all accepted →
+`proof-acceptance`; any non-accepted → `proof-rejection`).
 
 Labels are **internal**. Never mention them to the member.
 
