@@ -18,7 +18,9 @@ ground LLM gig acts when the member text fuzzy-matches the looked-up title.
 ``handoff-escalation`` is applied only when the agent calls ``crwd_handoff``.
 ``proof-rejection`` / ``proof-acceptance`` / ``gig-complete`` come from
 ``store_proof`` this turn (``gig-complete`` when ``is_gig_completed`` is true).
-``new-user`` is data-first (member has not completed a gig yet).
+On a proof turn, intent topics ``payment-issue`` / ``app-help`` are suppressed
+unless the member text independently grounds them (a receipt upload is not a
+payout question). ``new-user`` is data-first (member has not completed a gig yet).
 Classification observability is process logs only — never Chatwoot private notes.
 
 **Preserved labels.** This module emits topic / turn labels and assigns with
@@ -1025,6 +1027,59 @@ def acts_to_labels(
     return labels
 
 
+# Intent topics that must not ride along on a store_proof turn unless grounded.
+_PROOF_TURN_SUPPRESS_TOPICS = frozenset({"payment-issue", "app-help"})
+
+
+def _store_proof_missing_status_reason(
+    evidence: Sequence[Dict[str, str]],
+) -> Optional[str]:
+    """Observability when ``store_proof`` ran but no verdict status was recorded."""
+    for entry in evidence:
+        if (
+            str(entry.get("tool") or "").strip() == "crwd_db"
+            and str(entry.get("action") or "").strip() == "store_proof"
+            and not str(entry.get("proof_status") or "").strip()
+        ):
+            return "tool:store_proof:missing_status"
+    return None
+
+
+def _strip_topics_when_proof_turn(
+    labels: Sequence[str],
+    user_message: str,
+    evidence: Sequence[Dict[str, str]],
+) -> Tuple[List[str], List[str]]:
+    """Drop ungrounded payment/app topics when this turn has a proof verdict.
+
+    Receipt / proof uploads often inherit sticky ``payment-issue`` or pick up
+    payment-ish OCR words. Hard ``store_proof`` evidence means the turn is a
+    proof outcome — keep ``proof-*`` / ``gig-complete`` via finalize, and only
+    keep intent topics when member text independently grounds them.
+
+    Returns ``(labels, extra_reasons)``.
+    """
+    extra: List[str] = []
+    missing = _store_proof_missing_status_reason(evidence)
+    if missing:
+        extra.append(missing)
+
+    proof_labels, _proof_reasons = proof_verdict_labels_from_tools(evidence)
+    applied = [l for l in labels if l in APPLIED_LABEL_TITLES]
+    if not proof_labels:
+        return applied, extra
+
+    kept: List[str] = []
+    for label in applied:
+        if label in _PROOF_TURN_SUPPRESS_TOPICS and not _llm_label_grounded(
+            label, user_message, []
+        ):
+            extra.append(f"proof_turn:suppress:{label}")
+            continue
+        kept.append(label)
+    return kept, extra
+
+
 def _apply_conflict_post_checks(
     labels: List[str],
     acts: Sequence[str],
@@ -1035,6 +1090,7 @@ def _apply_conflict_post_checks(
     """Member-primary applied topics win over soft tool noise."""
     del soft_facts, membership, acts, user_message
     # Keep only applied titles that Stage 2 may emit.
+    # Proof-turn intent suppress runs later in classify_conversation._finish.
     return [l for l in labels if l in APPLIED_LABEL_TITLES]
 
 
@@ -1838,13 +1894,19 @@ def classify_conversation(
         reasons_out: Sequence[str],
         source_out: str,
     ) -> ClassificationResult:
+        stripped, strip_reasons = _strip_topics_when_proof_turn(
+            topic_labels, user_message, evidence
+        )
         final = _finalize_labels(
-            topic_labels,
+            stripped,
             handoff,
             proof_verdicts=proof_verdicts,
             new_user=is_new_user,
         )
         reason_list = list(reasons_out)
+        for reason in strip_reasons:
+            if reason not in reason_list:
+                reason_list.append(reason)
         if handoff and "handoff-escalation" not in reason_list and "tool:crwd_handoff" not in reason_list:
             reason_list.append("tool:crwd_handoff" if handoff_requested else "handoff")
         if is_new_user and "data:new-user" not in reason_list:

@@ -189,6 +189,74 @@ class TestHandoffAndProofVerdicts:
         assert evidence[-1]["proof_status"] == "rejected"
 
 
+class TestProofTurnSuppressesIntentTopics:
+    """Proof turns keep proof-* ; drop ungrounded payment-issue / app-help."""
+
+    _ACCEPTED = [
+        {
+            "tool": "crwd_db",
+            "action": "store_proof",
+            "proof_status": "accepted",
+            "is_gig_completed": "false",
+        },
+    ]
+    _REJECTED = [
+        {
+            "tool": "crwd_db",
+            "action": "store_proof",
+            "proof_status": "rejected",
+        },
+    ]
+
+    def test_empty_message_accepted_proof_no_payment(self):
+        labels = auto.classify_conversation_labels(
+            "",
+            tool_evidence=self._ACCEPTED,
+        )
+        assert "proof-acceptance" in labels
+        assert "payment-issue" not in labels
+        assert "app-help" not in labels
+
+    def test_empty_message_rejected_proof_no_payment(self):
+        labels = auto.classify_conversation_labels(
+            "",
+            tool_evidence=self._REJECTED,
+        )
+        assert "proof-rejection" in labels
+        assert "payment-issue" not in labels
+
+    def test_sticky_payment_suppressed_on_proof_turn(self):
+        result = auto.classify_conversation(
+            "ok",
+            tool_evidence=self._REJECTED,
+            allow_llm=False,
+            sticky_topics=["payment-issue"],
+            sticky_acts=["payout"],
+        )
+        assert "proof-rejection" in result.labels
+        assert "payment-issue" not in result.labels
+        assert any(r.startswith("proof_turn:suppress:") for r in result.reasons)
+
+    def test_grounded_payment_kept_with_proof_rejection(self):
+        labels = auto.classify_conversation_labels(
+            "when will I get paid?",
+            tool_evidence=self._REJECTED,
+        )
+        assert "proof-rejection" in labels
+        assert "payment-issue" in labels
+
+    def test_missing_store_proof_status_reason(self):
+        evidence = [{"tool": "crwd_db", "action": "store_proof"}]
+        result = auto.classify_conversation(
+            "here is my receipt",
+            tool_evidence=evidence,
+            allow_llm=False,
+        )
+        assert "tool:store_proof:missing_status" in result.reasons
+        assert "proof-acceptance" not in result.labels
+        assert "proof-rejection" not in result.labels
+
+
 class TestNewUser:
     def test_new_user_when_no_completed_gig(self, monkeypatch):
         monkeypatch.setattr(auto, "_member_has_completed_gig", lambda _cid: False)

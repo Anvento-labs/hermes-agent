@@ -440,6 +440,19 @@ stripped before assign and never written to Chatwoot.
 set it mainly filters the candidate list to `APPLIED_LABEL_TITLES` (legacy
 mid-gig / discovery conflict rules no longer emit labels).
 
+**Proof-turn intent suppress.** When this turn has hard `store_proof` evidence
+(`proof-acceptance` or `proof-rejection`), `_strip_topics_when_proof_turn`
+(called from `classify_conversation` → `_finish`) drops `payment-issue` and
+`app-help` unless the **member text** independently grounds that topic (same
+grounding rules as `_llm_label_grounded`). A receipt upload is not a payout
+question; sticky inheritance alone must not keep `payment-issue` on a proof
+turn. Grounded exception: member asks “when will I get paid?” **and**
+`store_proof` runs → both `payment-issue` and the proof verdict may apply.
+
+If `store_proof` was called but no `proof_status` was recorded, reasons include
+`tool:store_proof:missing_status` (observability). Verbal “approved” without
+`store_proof` still yields **no** `proof-*` label — that is intentional.
+
 ---
 
 ## 15. Heuristic fallback
