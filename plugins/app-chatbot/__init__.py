@@ -21,9 +21,7 @@ def _plugin_settings() -> Dict[str, Any]:
     return {"default_user_id": default_user_id()}
 
 
-def _prefetch_context(user_message: str = "", **kwargs: Any) -> Optional[Dict[str, str]]:
-    if str(kwargs.get("platform") or "").strip().lower() == "chatwoot":
-        return None
+def _prefetch_context(user_message: str = "", **_: Any) -> Optional[Dict[str, str]]:
     if not _crwd_db_available():
         return None
     settings = _plugin_settings()

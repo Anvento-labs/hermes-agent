@@ -209,10 +209,3 @@ class TestPluginRegistration:
         with patch.object(plugin, "format_router_context", return_value="ctx") as mock_fmt:
             plugin._prefetch_context(user_message="active gigs")
         mock_fmt.assert_called_once_with("active gigs", default_user_id="69a6f191cb29b0b371b3a156")
-
-    def test_prefetch_context_skips_chatwoot(self):
-        plugin = _load_plugin_init()
-        assert plugin._prefetch_context(
-            user_message="active gigs",
-            platform="chatwoot",
-        ) is None

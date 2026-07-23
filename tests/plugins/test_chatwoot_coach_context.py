@@ -77,12 +77,13 @@ class TestHook:
         assert "abc123" in out["context"]
         assert "Authenticated user_id" in out["context"]
         assert "Never look up a different member" in out["context"]
-        assert "Gig scope routing" in out["context"]
         assert "list_active_gigs" in out["context"]
         assert "get_user_gig_status" in out["context"]
-        assert "AMBIGUOUS" in out["context"]
-        assert "list gigs" in out["context"]
-        assert "MUST" in out["context"] or "mandatory" in out["context"].lower()
+        assert "clarify" in out["context"]
+        assert "Gig scope routing" not in out["context"]
+        assert "AMBIGUOUS" not in out["context"]
+        assert "MUST" not in out["context"]
+        assert "mandatory" not in out["context"].lower()
 
     def test_none_off_chatwoot(self, chatwoot_env):
         with patch.object(cc, "_is_chatwoot", return_value=False):
