@@ -51,7 +51,7 @@ Labels are **applied automatically** after each turn via a Chatwoot plugin hook
 (`post_tool_call` + `post_llm_call`). **Do not** call `chatwoot_labels`
 `assign_labels` during normal turns — the end-of-turn hook replaces labels.
 
-- **Intent (applied):** `payment-issue`, `app-help` from member text (LLM acts + heuristics).
+- **Intent (applied):** `payment-issue`, `app-help` from member text (LLM acts only; no regex).
 - **Data-first:** `new-user` while the member has not completed ≥1 gig (required
   proofs accepted). Payment status does not matter. Unknown DB → skip (no guess).
 - **Hard tools:** `crwd_handoff` → `handoff-escalation`; this-turn `store_proof`

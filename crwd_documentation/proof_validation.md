@@ -298,10 +298,11 @@ Do **not** manually assign these with `chatwoot_labels` on normal turns — the
 auto hook replaces labels end-of-turn.
 
 **Proof turns vs payment topics.** When `store_proof` ran this turn, the
-auto-labeler suppresses ungrounded `payment-issue` / `app-help` (including
-sticky inheritance of those topics). A bare receipt upload should show
-`proof-acceptance` or `proof-rejection` (± `new-user`), not `payment-issue`,
-unless the member also asked about pay in the same message.
+auto-labeler suppresses `payment-issue` / `app-help` unless this turn's LLM
+acts include `payout` / `app_nav`. Vision OCR captions are stripped before
+classification, so a bare receipt upload should show `proof-acceptance` or
+`proof-rejection` (± `new-user`), not `payment-issue`, unless the member also
+asked about pay in the same message.
 
 **Verbal approve without `store_proof`.** Saying “receipt approved” in the
 reply does **not** create `proof-acceptance`. No `store_proof` this turn →

@@ -5,23 +5,23 @@ never invokes ``chatwoot_labels``.
 
 Two-stage classification (accuracy-first):
 1. **Dialogue act** — auxiliary LLM (JSON text, no tool-calling API) maps
-   member intent to a closed act set. Pattern heuristics run only as fallback
-   when the LLM is disabled or fails.
-2. **Label map** — deterministic act → Chatwoot label titles (+ enrollment).
+   member intent to a closed act set. There is **no** regex/heuristic fallback
+   for applied intent topics; LLM failure → no topic (plus tools / sticky).
+2. **Label map** — deterministic act → Chatwoot label titles.
 
 Sticky inheritance covers short ambiguous replies and pronoun/contextual
-follow-ups when a prior topic exists. Member message defines the topic; coach
-tool calls are **soft evidence** in the LLM feature bundle — only
-``crwd_handoff`` is an exclusive hard tool label. Soft ``gig_hint`` values may
-ground LLM gig acts when the member text fuzzy-matches the looked-up title.
+follow-ups when a prior topic exists. Member **typed** intent defines the
+topic — vision OCR captions are stripped before classification. Coach tool
+calls are **soft evidence** in the LLM feature bundle — only ``crwd_handoff``
+is an exclusive hard tool label.
 
 ``handoff-escalation`` is applied only when the agent calls ``crwd_handoff``.
 ``proof-rejection`` / ``proof-acceptance`` / ``gig-complete`` come from
 ``store_proof`` this turn (``gig-complete`` when ``is_gig_completed`` is true).
 On a proof turn, intent topics ``payment-issue`` / ``app-help`` are suppressed
-unless the member text independently grounds them (a receipt upload is not a
-payout question). ``new-user`` is data-first (member has not completed a gig yet).
-Classification observability is process logs only — never Chatwoot private notes.
+unless this turn's LLM acts include ``payout`` / ``app_nav``. ``new-user`` is
+data-first (member has not completed a gig yet). Classification observability
+is process logs only — never Chatwoot private notes.
 
 **Preserved labels.** This module emits topic / turn labels and assigns with
 ``replace=True`` every turn — so state owned elsewhere is wiped unless carried
@@ -201,114 +201,19 @@ _META_IDENTITY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# LLM may not invent these unless member text or tools support them.
-_LLM_MUST_GROUND = frozenset({
-    "payment-issue",
-    "app-help",
-})
-
-# Scored topic rules for *applied* intent labels only.
-# Unapplied titles are never emitted from heuristics.
-_LABEL_RULES: Tuple[Tuple[str, float, Tuple[str, ...]], ...] = (
-    (
-        "payment-issue",
-        1.0,
-        (
-            r"\bpaid\b",
-            r"\bpayment\b",
-            r"\bpayout\b",
-            r"\bwhere(?:'s| is) my money\b",
-            r"\bwhen will i (?:get|be) paid\b",
-            r"\bpayment history\b",
-            r"\bdot\b",
-            r"\bchargeback\b",
-            r"\brefund\b",
-        ),
-    ),
-    (
-        "app-help",
-        1.0,
-        (
-            r"\bwhere (?:is|do i find)\b",
-            r"\bwhere (?:can|do|to|should) i (?:find|see|go|look|open)\b",
-            r"\bwhich (?:tab|section)\b",
-            r"\bin (?:which|what) (?:tab|section)\b",
-            r"\bhow do i (?:find|open|get to)\b",
-            r"\bhome tab\b",
-            r"\bexplore tab\b",
-            r"\bin the app\b",
-            r"\bnavigate\b",
-            r"\bwon'?t load\b",
-            r"\bbroken\b",
-            r"\bnot working\b",
-            r"\bdoesn'?t work\b",
-            r"\bcan'?t (?:open|load|click)\b",
-            r"\berror\b",
-            r"\bbug\b",
-            r"\bcrash\b",
-            r"\blogin\b",
-            r"\blink won'?t\b",
-            r"\bpage won'?t load\b",
-            r"\berror code\b",
-        ),
-    ),
+# Gateway vision pre-analysis wraps (gateway/run.py). OCR must not drive topics.
+_VISION_ENRICHMENT_RE = re.compile(
+    r"\[The user sent an image~ Here's what I can see:.*?\]\s*"
+    r"(?:\[If you need a closer look[^\]]*\]\s*)?",
+    re.DOTALL | re.IGNORECASE,
+)
+_VISION_FAILED_RE = re.compile(
+    r"\[The user sent an image but (?:I couldn't quite see it|"
+    r"something went wrong)[^\]]*\]\s*",
+    re.DOTALL | re.IGNORECASE,
 )
 
-_PROOF_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bproof\b",
-        r"\breceipt\b",
-        r"\bsubmit\b",
-        r"\bsubmission\b",
-        r"\bupload\b",
-        r"\battachment\b",
-        r"\bscreenshot\b",
-        r"\bpaperclip\b",
-        r"\bresubmit\b",
-    )
-)
-
-_MID_GIG_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\brequirements?\b",
-        r"\bdeadline\b",
-        r"\bcomplete (?:the )?gig\b",
-        r"\bhow do i do\b",
-        r"\bgig steps?\b",
-        r"\bnext steps?\b",
-        r"\bstuck on\b",
-        r"\bactive gig\b",
-        r"\bmy gig\b",
-        r"\bnext step for\b",
-        r"\bdetails? about (?:the )?\w+ gig\b",
-        r"\bgig details?\b",
-        r"\btell me about (?:the )?\w+ gig\b",
-        r"\bgive me details about (?:the )?\w+ gig\b",
-        r"\bhow (?:do|to) (?:i )?(?:complete|do)\b",
-        r"\bamazon gig\b",
-        r"\brejected\b",
-    )
-)
-
-# Purchase/quantity language — only mid-gig when CRWD/gig context is also present
-# (avoids inventing discovery on cold-start "how many products for it?").
-_MID_GIG_BUY_PATTERNS: Tuple[re.Pattern[str], ...] = tuple(
-    re.compile(p, re.IGNORECASE)
-    for p in (
-        r"\bhow many (?:products?|items?)\b",
-        r"\b(?:need|have) to buy\b",
-        r"\bbuy (?:the )?(?:product|item|products|items)\b",
-        r"\border (?:the )?(?:product|item)\b",
-        r"\bhow many (?:do i|to) (?:need|buy|order)\b",
-    )
-)
-
-_COMPILED_RULES: Tuple[Tuple[str, float, Tuple[re.Pattern[str], ...]], ...] = tuple(
-    (label, score, tuple(re.compile(p, re.IGNORECASE) for p in patterns))
-    for label, score, patterns in _LABEL_RULES
-)
+_IMAGE_ATTACHMENT_PLACEHOLDER = "(image attachment)"
 
 # Contextual crwd_db reads — soft evidence only (never hard-label mid-gig/discovery).
 _CONTEXTUAL_CRWD_ACTIONS = frozenset({
@@ -344,7 +249,7 @@ class ClassificationResult:
     acts: List[str] = field(default_factory=list)
     confidence: str = "low"  # "high" | "low"
     reasons: List[str] = field(default_factory=list)
-    source: str = "heuristic"  # tools|heuristic|llm|sticky|mixed|acts
+    source: str = "llm"  # tools|llm|sticky|mixed|acts|gate
     tools: List[str] = field(default_factory=list)
 
 
@@ -769,6 +674,31 @@ def _is_meta_identity_message(user_message: str) -> bool:
     return bool(_META_IDENTITY_RE.match((user_message or "").strip()))
 
 
+def _member_intent_text(user_message: str) -> str:
+    """Member typed text only — strip gateway vision OCR enrichment blocks.
+
+    Receipt OCR often contains words like ``PAYMENT SERVICE`` / ``Payment
+    method`` that must not drive ``payment-issue`` or other intent topics.
+    """
+    text = user_message or ""
+    text = _VISION_ENRICHMENT_RE.sub(" ", text)
+    text = _VISION_FAILED_RE.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _member_message_for_llm(user_message: str) -> str:
+    """Intent text for the act LLM; bare images become a neutral placeholder."""
+    intent = _member_intent_text(user_message)
+    if intent:
+        return intent
+    raw = (user_message or "").strip()
+    if raw and (
+        _VISION_ENRICHMENT_RE.search(raw) or _VISION_FAILED_RE.search(raw)
+    ):
+        return _IMAGE_ATTACHMENT_PLACEHOLDER
+    return intent
+
+
 def _is_ambiguous_message(user_message: str) -> bool:
     text = (user_message or "").strip()
     if not text:
@@ -783,29 +713,23 @@ def _is_ambiguous_message(user_message: str) -> bool:
 
 
 def _has_strong_topic_signal(user_message: str) -> bool:
-    """True when current member text alone clearly signals a topic switch."""
+    """True when current member text alone clearly signals a topic switch.
+
+    Used only to exclude deixis follow-ups from sticky inheritance (e.g. a
+    newly named gig). Does **not** use payment/app keyword lists.
+    """
     text = (user_message or "").strip()
     if not text:
         return False
-    lowered = text.lower()
-    for label, _score, patterns in _COMPILED_RULES:
-        if label == "off-topic":
-            continue
-        if any(p.search(lowered) for p in patterns):
-            return True
-    if _matches_any(lowered, _PROOF_PATTERNS):
-        return True
-    if _extract_gig_name(text):
-        return True
-    return False
+    return bool(_extract_gig_name(text))
 
 
 def _is_contextual_followup(user_message: str) -> bool:
     """Pronoun/deixis follow-ups that refer to the prior turn's topic.
 
     Does not invent a topic on its own — caller must require sticky exists.
-    Clear topic switches (strong pattern / named gig) are excluded so those
-    still go through LLM / heuristic classification.
+    Clear topic switches (named gig) are excluded so those still go through
+    the act LLM.
     """
     text = (user_message or "").strip()
     if not text or len(text) > _CONTEXTUAL_FOLLOWUP_MAX_LEN:
@@ -859,8 +783,9 @@ def _collect_member_messages(
     *,
     limit: int = _LLM_MEMBER_TURNS,
 ) -> List[str]:
-    """Return up to ``limit`` member messages, oldest first."""
-    current = (current_user_message or "").strip()
+    """Return up to ``limit`` member messages (OCR-stripped), oldest first."""
+    current_raw = (current_user_message or "").strip()
+    current = _member_message_for_llm(current_raw) if current_raw else ""
     prior: List[str] = []
     for msg in reversed(conversation_history or ()):
         if not isinstance(msg, dict) or msg.get("role") != "user":
@@ -869,9 +794,12 @@ def _collect_member_messages(
         if not isinstance(content, str) or not content.strip():
             continue
         text = content.strip()
-        if text == current:
+        if text == current_raw:
             continue
-        prior.append(text)
+        cleaned = _member_message_for_llm(text)
+        if not cleaned:
+            continue
+        prior.append(cleaned)
         if len(prior) >= max(0, limit - 1):
             break
     prior.reverse()
@@ -904,25 +832,6 @@ def _collect_assistant_replies(
         if not replies or replies[-1] != truncated:
             replies.append(truncated)
     return replies[-limit:]
-
-
-def _build_regex_context(
-    user_message: str,
-    conversation_history: Optional[Sequence[Any]] = None,
-) -> str:
-    """Narrow member-only text for heuristic fallback and grounding (no coach prose)."""
-    primary = (user_message or "").strip()
-    history = conversation_history or ()
-    prior = _prior_user_content(history, primary)
-
-    if _is_greeting_message(primary) or _is_meta_identity_message(primary):
-        return primary.lower()
-    if (
-        (_is_ambiguous_message(primary) or _is_contextual_followup(primary))
-        and prior
-    ):
-        return f"{primary} {prior}".lower()
-    return primary.lower()
 
 
 def _build_llm_feature_bundle(
@@ -963,14 +872,14 @@ def _build_turn_context(
     conversation_history: Optional[Sequence[Any]] = None,
     assistant_response: str = "",
 ) -> Tuple[str, str]:
-    """Return (regex_text, llm_feature_bundle)."""
-    regex_text = _build_regex_context(user_message, conversation_history)
+    """Return (intent_text, llm_feature_bundle) for callers/tests."""
+    intent = _member_intent_text(user_message)
     llm_blob = _build_llm_feature_bundle(
         user_message,
         conversation_history,
         assistant_response,
     )
-    return regex_text, llm_blob
+    return intent, llm_blob
 
 
 def _enrollment_summary(contact_id: str) -> Tuple[Optional[Tuple[bool, Set[str]]], str]:
@@ -1027,8 +936,11 @@ def acts_to_labels(
     return labels
 
 
-# Intent topics that must not ride along on a store_proof turn unless grounded.
-_PROOF_TURN_SUPPRESS_TOPICS = frozenset({"payment-issue", "app-help"})
+# Intent topics kept on a proof turn only when this turn's LLM acts say so.
+_PROOF_TURN_KEEP_ACTS = {
+    "payment-issue": "payout",
+    "app-help": "app_nav",
+}
 
 
 def _store_proof_missing_status_reason(
@@ -1047,15 +959,13 @@ def _store_proof_missing_status_reason(
 
 def _strip_topics_when_proof_turn(
     labels: Sequence[str],
-    user_message: str,
+    acts: Sequence[str],
     evidence: Sequence[Dict[str, str]],
 ) -> Tuple[List[str], List[str]]:
-    """Drop ungrounded payment/app topics when this turn has a proof verdict.
+    """Drop payment/app topics on a proof turn unless LLM acts keep them.
 
-    Receipt / proof uploads often inherit sticky ``payment-issue`` or pick up
-    payment-ish OCR words. Hard ``store_proof`` evidence means the turn is a
-    proof outcome — keep ``proof-*`` / ``gig-complete`` via finalize, and only
-    keep intent topics when member text independently grounds them.
+    Receipt uploads must not keep sticky ``payment-issue``. Keep intent topics
+    only when this turn's dialogue acts include ``payout`` / ``app_nav``.
 
     Returns ``(labels, extra_reasons)``.
     """
@@ -1069,11 +979,11 @@ def _strip_topics_when_proof_turn(
     if not proof_labels:
         return applied, extra
 
+    act_set = {str(a).strip().lower() for a in acts if a}
     kept: List[str] = []
     for label in applied:
-        if label in _PROOF_TURN_SUPPRESS_TOPICS and not _llm_label_grounded(
-            label, user_message, []
-        ):
+        need_act = _PROOF_TURN_KEEP_ACTS.get(label)
+        if need_act and need_act not in act_set:
             extra.append(f"proof_turn:suppress:{label}")
             continue
         kept.append(label)
@@ -1094,44 +1004,18 @@ def _apply_conflict_post_checks(
     return [l for l in labels if l in APPLIED_LABEL_TITLES]
 
 
-def _filter_grounded_acts(
-    acts: Sequence[str],
-    user_message: str,
-    *,
-    sticky_labels: Optional[Sequence[str]] = None,
-    sticky_acts: Optional[Sequence[str]] = None,
-    tool_gig_hints: Optional[Sequence[str]] = None,
-) -> List[str]:
-    """Drop applied acts that lack member-text support."""
-    act_label = {
-        "payout": "payment-issue",
-        "app_nav": "app-help",
-    }
+def _normalize_acts(acts: Sequence[str]) -> List[str]:
+    """Keep unique acts that belong to the closed dialogue-act set."""
     kept: List[str] = []
     for act in acts:
-        if act not in DIALOGUE_ACTS:
-            continue
-        label = act_label.get(act)
-        if label and not _llm_label_grounded(
-            label,
-            user_message,
-            [],
-            sticky_labels=sticky_labels,
-            sticky_acts=sticky_acts,
-            tool_gig_hints=tool_gig_hints,
-        ):
-            continue
-        if act not in kept:
-            kept.append(act)
+        a = str(act).strip().lower()
+        if a in DIALOGUE_ACTS and a not in kept:
+            kept.append(a)
     return kept
 
 
 def _has_crwd_anchor(text: str) -> bool:
     return bool(_CRWD_ANCHOR_RE.search(text))
-
-
-def _matches_any(text: str, patterns: Sequence[re.Pattern[str]]) -> bool:
-    return any(p.search(text) for p in patterns)
 
 
 _COMPACT_NAME_MIN_LEN = 4
@@ -1469,48 +1353,6 @@ def _ensure_label(matched: List[str], label: str, *, prefer_front: bool = False)
         matched.append(label)
 
 
-def _apply_proof_and_mid_gig_labels(
-    text: str,
-    user_message: str,
-    contact_id: str,
-    matched: List[str],
-    reasons: List[str],
-) -> Tuple[float, bool]:
-    """Legacy proof/mid-gig heuristics — no longer emit unapplied titles.
-
-    Returns ``(score, suppress_discovery_fallback)``. Kept so call sites and
-    enrollment-unknown suppress behavior stay stable; assignment is a no-op.
-    """
-    del matched  # unapplied titles are not appended
-    proof = _matches_any(text, _PROOF_PATTERNS)
-    mid = _matches_any(text, _MID_GIG_PATTERNS)
-    if not mid and _matches_any(text, _MID_GIG_BUY_PATTERNS) and (
-        _has_crwd_anchor(text) or bool(_extract_gig_name(user_message))
-        or bool(_extract_gig_name(text))
-    ):
-        mid = True
-    if not mid and _extract_gig_name(user_message):
-        mid = True
-    if _PROFILE_SELF_RE.search(user_message or ""):
-        mid = False
-    if not proof and not mid:
-        return 0.0, False
-
-    membership = _member_enrollment(contact_id) if (proof or mid) else None
-
-    if proof:
-        reasons.append("heuristic:proof:unapplied")
-        return 0.0, False
-
-    if membership is None and mid:
-        reasons.append("heuristic:mid-gig:skipped_unknown_enrollment")
-        return 0.0, True
-
-    if mid:
-        reasons.append("heuristic:mid-gig:unapplied")
-    return 0.0, False
-
-
 def _finalize_labels(
     topics: Sequence[str],
     handoff: bool,
@@ -1544,44 +1386,6 @@ def _finalize_labels(
     return deduped
 
 
-def _heuristic_classify(
-    text: str,
-    user_message: str,
-    contact_id: str,
-) -> Tuple[List[str], List[str], float, bool]:
-    """Return (labels, reasons, best_score, used_fallback_only)."""
-    matched: List[str] = []
-    reasons: List[str] = []
-    best = 0.0
-    strong = False
-
-    if not text.strip():
-        return [], ["heuristic:empty->no-topic"], 0.2, True
-
-    for label, score, patterns in _COMPILED_RULES:
-        if any(p.search(text) for p in patterns):
-            if label not in matched:
-                matched.append(label)
-                reasons.append(f"heuristic:{label}")
-            best = max(best, score)
-            strong = True
-
-    proof_score, _suppress = _apply_proof_and_mid_gig_labels(
-        text, user_message, contact_id, matched, reasons
-    )
-    if proof_score:
-        best = max(best, proof_score)
-        strong = True
-
-    fallback_only = False
-    if not matched:
-        fallback_only = True
-        reasons.append("heuristic:fallback->no-topic")
-        best = 0.25
-
-    return matched, reasons, best, fallback_only or (not strong and best < 0.6)
-
-
 def _labels_config() -> Dict[str, Any]:
     try:
         from hermes_cli.config import load_config
@@ -1596,45 +1400,14 @@ def _labels_config() -> Dict[str, Any]:
 
 
 def _llm_fallback_enabled() -> bool:
+    """When True (default), run Stage-1 aux LLM for intent acts.
+
+    Named for historical config key ``llm_fallback``; this is now the primary
+    (and only) path for applied intent topics — there is no regex fallback.
+    """
     cfg = _labels_config()
     if "llm_fallback" in cfg:
         return bool(cfg.get("llm_fallback"))
-    return True
-
-
-def _llm_label_grounded(
-    label: str,
-    member_text: str,
-    tool_topic_labels: Sequence[str],
-    *,
-    sticky_labels: Optional[Sequence[str]] = None,
-    sticky_acts: Optional[Sequence[str]] = None,
-    tool_gig_hints: Optional[Sequence[str]] = None,
-) -> bool:
-    """False for applied topic labels invented without member evidence."""
-    del sticky_labels, sticky_acts, tool_gig_hints  # gig sticky unused for applied set
-    if label not in _LLM_MUST_GROUND:
-        return True
-    if label in tool_topic_labels:
-        return True
-    text = (member_text or "").lower()
-    if label == "payment-issue":
-        return bool(
-            re.search(
-                r"\b(paid|payment|payout|dot|money|refund|chargeback)\b",
-                text,
-                re.IGNORECASE,
-            )
-        )
-    if label == "app-help":
-        return bool(
-            re.search(
-                r"\b(where|tab|section|navigate|broken|error|bug|crash|login|"
-                r"won'?t load|not working|in the app)\b",
-                text,
-                re.IGNORECASE,
-            )
-        )
     return True
 
 
@@ -1648,6 +1421,9 @@ def classify_acts_with_auxiliary(llm_context: str) -> Optional[Dict[str, Any]]:
         "You classify a CRWD Coach Chatwoot conversation into dialogue acts. "
         "Classify ONLY from member messages. Coach replies are context only — "
         "do NOT infer payout or browse_open_gigs from coach phrasing (get paid, gigs). "
+        "A member line of '(image attachment)' means they sent an image with no "
+        "typed caption — use act 'proof' when they are submitting evidence; "
+        "never invent payout from an image alone. "
         "Looking up enrolled gigs (get_user_gigs) is default coach behavior and must "
         "NOT imply enrolled_gig_help unless the MEMBER asks about enrolled-gig "
         "steps/deadline/requirements/proof. "
@@ -1864,7 +1640,7 @@ def classify_conversation(
     sticky_topics: Optional[Sequence[str]] = None,
     sticky_acts: Optional[Sequence[str]] = None,
 ) -> ClassificationResult:
-    """Full classification: gates → sticky → act LLM → heuristic fallback."""
+    """Full classification: gates → sticky → act LLM (no regex topic fallback)."""
     evidence = list(tool_evidence if tool_evidence is not None else tool_evidence_this_turn())
     soft_facts = soft_tool_facts(evidence)
     hard_tool_labels, hard_tool_reasons = hard_labels_from_tools(evidence)
@@ -1886,6 +1662,9 @@ def classify_conversation(
     # Known incomplete → new-user; unknown → skip (do not guess).
     is_new_user = completed is False
 
+    # Typed member intent only — vision OCR never drives topics or sticky.
+    intent_text = _member_intent_text(user_message)
+
     def _finish(
         topic_labels: Sequence[str],
         *,
@@ -1895,7 +1674,7 @@ def classify_conversation(
         source_out: str,
     ) -> ClassificationResult:
         stripped, strip_reasons = _strip_topics_when_proof_turn(
-            topic_labels, user_message, evidence
+            topic_labels, acts_out, evidence
         )
         final = _finalize_labels(
             stripped,
@@ -1920,20 +1699,20 @@ def classify_conversation(
             tools=tool_keys,
         )
 
-    # Deterministic gates → no topic (unapplied off-topic removed)
-    if not (user_message or "").strip():
+    # Deterministic gates → no topic (bare image / empty after OCR strip)
+    if not intent_text:
         return _finish(
             [],
             acts_out=["chitchat"],
             confidence_out="high",
             reasons_out=["gate:empty->no-topic"],
-            source_out="heuristic",
+            source_out="gate",
         )
 
-    if _is_greeting_message(user_message) or _is_meta_identity_message(user_message):
+    if _is_greeting_message(intent_text) or _is_meta_identity_message(intent_text):
         reason = (
             "gate:meta->no-topic"
-            if _is_meta_identity_message(user_message)
+            if _is_meta_identity_message(intent_text)
             else "gate:greeting->no-topic"
         )
         return _finish(
@@ -1941,13 +1720,12 @@ def classify_conversation(
             acts_out=["chitchat"],
             confidence_out="high",
             reasons_out=[reason],
-            source_out="heuristic",
+            source_out="gate",
         )
 
-    regex_text = _build_regex_context(user_message, conversation_history)
-    force_scam, hard_scam_reasons = hard_scam_signals(user_message, contact_id)
+    force_scam, hard_scam_reasons = hard_scam_signals(intent_text, contact_id)
     reasons: List[str] = list(hard_tool_reasons)
-    source = "heuristic"
+    source = "llm"
     confidence = "low"
     acts: List[str] = []
     labels: List[str] = []
@@ -1962,22 +1740,22 @@ def classify_conversation(
     # Ambiguous / contextual follow-up → sticky applied topics only.
     if (
         not force_scam
-        and _should_inherit_sticky(user_message, sticky_list, sticky_act_list)
+        and _should_inherit_sticky(intent_text, sticky_list, sticky_act_list)
     ):
         acts = ["ambiguous_followup"]
         labels = acts_to_labels(
             acts,
-            user_message,
+            intent_text,
             contact_id,
             membership,
             sticky_topics=sticky_list,
         )
         labels = _apply_conflict_post_checks(
-            labels, acts, user_message, soft_facts, membership
+            labels, acts, intent_text, soft_facts, membership
         )
         reason = (
             "sticky:contextual_followup"
-            if _is_contextual_followup(user_message)
+            if _is_contextual_followup(intent_text)
             else "sticky:ambiguous_followup"
         )
         return _finish(
@@ -1988,7 +1766,7 @@ def classify_conversation(
             source_out="sticky",
         )
 
-    # Aux LLM is primary (accuracy-first). Pattern heuristics are fallback only.
+    # Aux LLM is the only source of applied intent topics.
     if allow_llm and _llm_fallback_enabled():
         llm_blob = _build_llm_feature_bundle(
             user_message,
@@ -2001,22 +1779,15 @@ def classify_conversation(
         )
         act_result = classify_acts_with_auxiliary(llm_blob)
         if act_result:
-            gig_hints = _tool_gig_hints(evidence)
-            acts = _filter_grounded_acts(
-                act_result["acts"],
-                user_message,
-                sticky_labels=sticky_list,
-                sticky_acts=sticky_act_list,
-                tool_gig_hints=gig_hints,
-            )
+            acts = _normalize_acts(act_result["acts"])
             if not acts:
-                reasons.append("llm:acts_ungrounded")
+                reasons.append("llm:acts_empty")
             else:
                 labels = acts_to_labels(
-                    acts, user_message, contact_id, membership, sticky_topics=sticky_list
+                    acts, intent_text, contact_id, membership, sticky_topics=sticky_list
                 )
                 labels = _apply_conflict_post_checks(
-                    labels, acts, user_message, soft_facts, membership
+                    labels, acts, intent_text, soft_facts, membership
                 )
                 reasons.extend(
                     [f"llm_act:{a}" for a in acts]
@@ -2026,44 +1797,32 @@ def classify_conversation(
                 source = "llm"
         else:
             reasons.append("llm:act_classify_failed")
+    elif not allow_llm or not _llm_fallback_enabled():
+        reasons.append("llm:disabled")
 
-    # Heuristic fallback when LLM did not produce labels
-    if not labels:
-        heur_labels, heur_reasons, heur_score, fallback_only = _heuristic_classify(
-            regex_text, user_message, contact_id
-        )
-        acts = _labels_to_acts(heur_labels) or (["chitchat"] if not heur_labels else [])
+    # No regex/heuristic fallback. Optional sticky only for ambiguous follow-ups.
+    if not labels and _should_inherit_sticky(
+        intent_text, sticky_list, sticky_act_list
+    ):
+        acts = ["ambiguous_followup"]
         labels = acts_to_labels(
-            acts, user_message, contact_id, membership, sticky_topics=sticky_list
+            acts,
+            intent_text,
+            contact_id,
+            membership,
+            sticky_topics=sticky_list,
         )
-        # Prefer direct heuristic applied titles when acts map empty.
-        for hl in heur_labels:
-            if hl in APPLIED_LABEL_TITLES and hl not in labels:
-                labels.append(hl)
-        labels = _apply_conflict_post_checks(
-            labels, acts, user_message, soft_facts, membership
-        )
-        reasons.extend(heur_reasons)
-        confidence = "high" if (not fallback_only and heur_score >= 0.6) else "low"
-        source = "heuristic"
-
-        if confidence == "low" and _should_inherit_sticky(
-            user_message, sticky_list, sticky_act_list
-        ):
-            acts = ["ambiguous_followup"]
-            labels = acts_to_labels(
-                acts,
-                user_message,
-                contact_id,
-                membership,
-                sticky_topics=sticky_list,
-            )
-            reasons.append("sticky:previous_topics")
-            source = "sticky"
+        reasons.append("sticky:previous_topics")
+        source = "sticky"
+        confidence = "low"
 
     if not labels:
         acts = acts or ["chitchat"]
         reasons.append("fallback:no-topic")
+        if source == "llm" and "llm:act_classify_failed" in reasons:
+            source = "gate"
+        elif source == "llm" and not any(r.startswith("llm_act:") for r in reasons):
+            source = "gate"
 
     # Scam is unapplied — keep act/reasons for observability, do not assign.
     if force_scam:
@@ -2076,8 +1835,8 @@ def classify_conversation(
         labels = [l for l in labels if l != "scam"]
         if confidence == "low":
             confidence = "high"
-        if source in {"heuristic", "sticky"}:
-            source = "mixed" if labels else "heuristic"
+        if source in {"gate", "sticky"}:
+            source = "mixed" if labels else "gate"
 
     return _finish(
         labels,
@@ -2104,7 +1863,7 @@ def classify_conversation_labels(
         handoff_requested=handoff_requested,
         assistant_response=assistant_response,
         tool_evidence=tool_evidence,
-        allow_llm=False,
+        allow_llm=True,
         sticky_topics=None,
     )
     return list(result.labels)

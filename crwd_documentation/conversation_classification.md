@@ -24,12 +24,12 @@ Agent-facing quick reference: `skills/crwd/chatwoot-conversation-labels/`.
 7. [Deterministic gates](#7-deterministic-gates)
 8. [Sticky inheritance](#8-sticky-inheritance)
 9. [Stage 1 — dialogue acts (aux LLM)](#9-stage-1--dialogue-acts-aux-llm)
-10. [Grounding filter](#10-grounding-filter)
+10. [Member intent text (OCR strip)](#10-member-intent-text-ocr-strip)
 11. [Stage 2 — act → label map](#11-stage-2--act--label-map)
 12. [Data-first labels (`new-user`)](#12-data-first-labels-new-user)
 13. [Tool evidence (hard vs soft)](#13-tool-evidence-hard-vs-soft)
 14. [Conflict post-checks](#14-conflict-post-checks)
-15. [Heuristic fallback](#15-heuristic-fallback)
+15. [No heuristic / regex topic fallback](#15-no-heuristic--regex-topic-fallback)
 16. [Assignment to Chatwoot](#16-assignment-to-chatwoot)
 17. [Configuration](#17-configuration)
     - [17.1 Using a low-cost LLM for classification](#171-using-a-low-cost-llm-for-classification)
@@ -53,8 +53,8 @@ Design goals:
 
 | Goal                         | How it shows up in code                                         |
 | ---------------------------- | --------------------------------------------------------------- |
-| Accuracy over cost           | Aux LLM is primary; regex heuristics are fallback only          |
-| Member intent wins           | Soft tool lookups never force topic labels                      |
+| Accuracy over cost           | Aux LLM is the **only** source of applied intent topics (no regex) |
+| Member intent wins           | Soft tool lookups never force topic labels; vision OCR is stripped |
 | Narrow applied set           | Only titles in `APPLIED_LABEL_TITLES` are assigned               |
 | Stable triage set            | `replace=True` each turn so stale topics drop on a clear switch |
 | Continuity for short replies | Sticky for `payment-issue` / `app-help` on “ok”, “yes”, etc.    |
@@ -120,8 +120,8 @@ Defined in `APPLIED_LABELS` (`labels.py`):
 
 | Label                | Description                                      | When it is applied                                                                 |
 | -------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| `payment-issue`      | Any payment-related question                     | Act `payout` or payment regex (member text)                                        |
-| `app-help`           | App navigation / broken UI                       | Act `app_nav` or app-help regex                                                    |
+| `payment-issue`      | Any payment-related question                     | Act `payout` (aux LLM)                                                             |
+| `app-help`           | App navigation / broken UI                       | Act `app_nav` (aux LLM)                                                            |
 | `new-user`           | Member has not completed a gig yet               | **Data-first** — DB says no completed gig (unknown → skip, do not guess)           |
 | `proof-acceptance`   | All proofs stored this turn accepted             | Hard: this-turn `crwd_db.store_proof` (all statuses `accepted`)                    |
 | `proof-rejection`    | At least one proof this turn not accepted        | Hard: this-turn `store_proof` with any non-`accepted` status                       |
@@ -132,8 +132,7 @@ Defined in `APPLIED_LABELS` (`labels.py`):
 ### 4.2 Unapplied (not assigned)
 
 Defined in `UNAPPLIED_LABELS`. Stage 1 may still emit related **dialogue acts**
-for observability, but Stage 2 / heuristics / finalize **never** assign these
-titles:
+for observability, but Stage 2 / finalize **never** assign these titles:
 
 `mid-gig-support`, `proof-submission`, `gig-discovery`, `general-inquiry`,
 `payment-payout` (superseded by `payment-issue`), `account-eligibility`,
@@ -189,39 +188,41 @@ Caches (TTL 60s per contact):
 
 ## 6. Two-stage pipeline
 
-Accuracy-first: there is **no regex skip** that bypasses the aux LLM.
-Pattern heuristics run only when the LLM is disabled, fails, or produces
-ungrounded acts.
+Accuracy-first: applied intent topics come **only** from the aux LLM (plus
+sticky for short follow-ups). There is **no** regex/heuristic topic fallback.
+When the LLM is disabled or fails → no intent topic (hard tools / `new-user`
+/ sticky-if-ambiguous still apply).
 
 ```mermaid
 flowchart TD
   hook[post_llm_call auto_label_hook]
+  intent[Strip vision OCR to typed intent]
   gates[Deterministic gates]
   sticky[Sticky ambiguous or contextual follow-up]
   llm[Stage 1 aux LLM JSON acts]
-  ground[Grounding filter]
-  heur[Heuristic fallback]
   map[Stage 2 acts_to_labels]
   post[Conflict post-checks]
   finalize["_finalize_labels + handoff + proof + new-user"]
   preserve[Re-attach preserved Chatwoot labels]
   assign[replace=True assign]
 
-  hook --> gates
+  hook --> intent
+  intent --> gates
   gates -->|greeting / identity / empty| finalize
   gates --> sticky
   sticky -->|inherit| map
   sticky -->|no| llm
-  llm -->|ok| ground
-  ground -->|acts remain| map
-  ground -->|all stripped| heur
-  llm -->|fail / disabled| heur
-  heur --> map
+  llm -->|acts| map
+  llm -->|fail / disabled| finalize
   map --> post
   post --> finalize
   finalize --> preserve
   preserve --> assign
 ```
+
+Vision OCR in gateway-enriched image messages is stripped before gates /
+sticky / the LLM feature bundle (`_member_intent_text`). Bare image uploads
+are treated as empty intent (no sticky payment inheritance).
 
 Entry point: `classify_conversation()` → `ClassificationResult` with
 `labels`, `acts`, `confidence`, `reasons`, `source`, `tools`.
@@ -234,7 +235,7 @@ assign with `replace=True`, store sticky.
 
 ## 7. Deterministic gates
 
-Before sticky / LLM / heuristics, these short-circuit to **no topic labels**
+Before sticky / LLM, these short-circuit to **no topic labels**
 (`acts=["chitchat"]`, confidence `high`). They do **not** assign `off-topic`
 (unapplied).
 
@@ -266,8 +267,8 @@ Inheritance triggers (`_should_inherit_sticky`) when sticky exists **and**:
 1. **Ambiguous short reply** — empty, greeting/meta (already gated), or short
    yes/no/ok/`that one` (max 24 chars), or ≤8 chars with no CRWD anchor; or
 2. **Contextual / deixis follow-up** — message ≤120 chars containing
-   `it` / `that` / `for it` / `about that` / …, **without** a strong new topic
-   signal (payment / app-help regex, etc.).
+   `it` / `that` / `for it` / `about that` / …, **without** a newly named gig
+   (named-gig extraction excludes sticky so those go through the LLM).
 
 When inherited:
 
@@ -340,19 +341,19 @@ System prompt rules of note:
 
 ---
 
-## 10. Grounding filter
+## 10. Member intent text (OCR strip)
 
-After the LLM returns acts, `_filter_grounded_acts` drops acts that map to
-labels in `_LLM_MUST_GROUND` unless member text supports them:
+Gateway vision pre-analysis wraps images as
+`[The user sent an image~ Here's what I can see: …]`. That OCR often contains
+words like `PAYMENT SERVICE` / `Payment method` that must **not** drive
+`payment-issue`.
 
-`payment-issue`, `app-help`
+`_member_intent_text()` strips those blocks (and failed-vision variants),
+leaving only the member’s typed caption. The LLM feature bundle uses the
+same cleaning; bare images become `(image attachment)`.
 
-(Other acts may pass through for observability but Stage 2 emits no applied
-label for them.)
-
-If **all** acts are stripped → treat as LLM failure path → heuristic fallback
-(`reasons` includes `llm:acts_ungrounded`). That prevents the model from
-inventing payment/app topics from coach prose or soft tools.
+Empty intent after strip → `gate:empty->no-topic` (proof/handoff/`new-user`
+can still attach from tools/data).
 
 ---
 
@@ -443,11 +444,10 @@ mid-gig / discovery conflict rules no longer emit labels).
 **Proof-turn intent suppress.** When this turn has hard `store_proof` evidence
 (`proof-acceptance` or `proof-rejection`), `_strip_topics_when_proof_turn`
 (called from `classify_conversation` → `_finish`) drops `payment-issue` and
-`app-help` unless the **member text** independently grounds that topic (same
-grounding rules as `_llm_label_grounded`). A receipt upload is not a payout
-question; sticky inheritance alone must not keep `payment-issue` on a proof
-turn. Grounded exception: member asks “when will I get paid?” **and**
-`store_proof` runs → both `payment-issue` and the proof verdict may apply.
+`app-help` unless **this turn’s LLM acts** include `payout` / `app_nav`.
+A receipt upload is not a payout question; sticky inheritance alone must not
+keep `payment-issue` on a proof turn. Exception: member asks about pay (LLM
+returns `payout`) **and** `store_proof` runs → both labels may apply.
 
 If `store_proof` was called but no `proof_status` was recorded, reasons include
 `tool:store_proof:missing_status` (observability). Verbal “approved” without
@@ -455,24 +455,18 @@ If `store_proof` was called but no `proof_status` was recorded, reasons include
 
 ---
 
-## 15. Heuristic fallback
+## 15. No heuristic / regex topic fallback
 
-Used when LLM is disabled (`display.platforms.chatwoot.labels.llm_fallback: false`),
-call fails, or acts were fully ungrounded.
+Applied intent topics (`payment-issue`, `app-help`) are **never** invented from
+keyword patterns. `_LABEL_RULES` / `_heuristic_classify` / regex grounding are
+removed.
 
-Inputs:
-
-- **Regex text**: current member message; if ambiguous/contextual, concatenated
-  with **one prior member** message. **No coach prose.**
-- Scored `_LABEL_RULES` for **applied** intent only: `payment-issue`, `app-help`
-- Legacy proof / mid-gig pattern helpers remain for reasons /
-  enrollment-unknown suppress behavior but **do not append unapplied titles**
-
-Fallbacks when nothing strong matches: **no topic** (`fallback:no-topic` /
-`heuristic:fallback->no-topic`) — not `off-topic` or `gig-discovery`.
-
-If confidence stays low and the message still looks sticky-eligible, sticky
-inheritance can still win (`sticky:previous_topics`).
+When the LLM is disabled (`display.platforms.chatwoot.labels.llm_fallback: false`),
+fails, or returns no mappable acts → **no intent topic**
+(`fallback:no-topic` / `llm:disabled` / `llm:act_classify_failed`). Hard tool
+labels (`proof-*`, handoff, `gig-complete`) and data-first `new-user` still
+apply. If the message is sticky-eligible, sticky inheritance can still win
+(`sticky:previous_topics`).
 
 ---
 
@@ -528,7 +522,8 @@ display:
   platforms:
     chatwoot:
       labels:
-        # When true (default), run Stage-1 aux LLM. When false, heuristics only.
+        # When true (default), run Stage-1 aux LLM for intent topics.
+        # When false: gates + sticky + hard tools only (no intent from text).
         llm_fallback: true
 
 auxiliary:
@@ -544,9 +539,8 @@ auxiliary:
 
 Notes:
 
-- `llm_fallback` is historically named, but with the accuracy-first pipeline
-  the aux LLM is the **primary** path when enabled — heuristics are the
-  fallback.
+- `llm_fallback` is historically named; it now enables the **only** path for
+  applied intent topics (there is no regex fallback).
 - Requires Chatwoot credentials (`check_chatwoot_labels_requirements`).
 - `new-user` needs `CRWD_MONGO_URI` (and successful contact → user id
   resolution). Unknown membership → label omitted.
@@ -670,9 +664,9 @@ auxiliary:
 On capacity/auth errors, Hermes walks `fallback_chain` before falling back to
 the main agent model. See `website/docs/user-guide/features/fallback-providers.md`.
 
-#### Zero LLM cost (heuristics only)
+#### Disable classification LLM (gates + sticky + tools only)
 
-To disable the classification LLM entirely and rely on regex + sticky + gates:
+To skip the Stage-1 aux LLM (cost):
 
 ```yaml
 display:
@@ -682,9 +676,9 @@ display:
         llm_fallback: false
 ```
 
-No `auxiliary.chatwoot_labels` model is called. Accuracy drops on ambiguous or
-multi-intent messages; use this only if cost matters more than triage precision.
-Heuristics only emit `payment-issue` / `app-help` (plus finalize hard/data labels).
+No `auxiliary.chatwoot_labels` model is called. Applied intent topics will
+**not** appear from text alone — only sticky short follow-ups, hard tool
+labels, and `new-user` remain. Prefer keeping the LLM enabled for triage.
 
 #### What stays on the main model
 
@@ -735,16 +729,17 @@ Successful apply (INFO):
   (confidence=... source=... tools=... reasons=...)
 ```
 
-`ClassificationResult.source` values: `heuristic` | `llm` | `sticky` |
-`tools` | `mixed` | `acts` (as used by the pipeline).
+`ClassificationResult.source` values: `llm` | `sticky` | `gate` | `tools` |
+`mixed` | `acts` (as used by the pipeline).
 
 `reasons` are machine tags such as:
 
 - `gate:greeting->no-topic`
+- `gate:empty->no-topic`
 - `sticky:contextual_followup`
 - `llm_act:payout`
-- `llm:acts_ungrounded`
-- `heuristic:payment-issue`
+- `llm:disabled` / `llm:act_classify_failed`
+- `proof_turn:suppress:payment-issue`
 - `tool:crwd_handoff`
 - `tool:store_proof:acceptance` / `tool:store_proof:rejection`
 - `data:new-user`
@@ -793,13 +788,15 @@ when no matching Chatwoot label is assigned.
 5. **Expecting old topics after a clear switch** — `replace=True` drops them
    (except `risk-*`, and `handoff-escalation` only while status is `open`).
 6. **Treating coach welcome as payment** — greetings/meta are gated; coach
-   replies are truncated context for the LLM and ignored by heuristics.
-7. **Mentioning labels to the member** — internal triage only.
-8. **Relying on sticky across process restarts** — sticky is in-memory only;
+   replies are truncated context for the LLM and must not invent `payout`.
+7. **Treating receipt OCR as payment** — vision captions are stripped; bare
+   image uploads are empty intent (no `payment-issue` from `PAYMENT SERVICE`).
+8. **Mentioning labels to the member** — internal triage only.
+9. **Relying on sticky across process restarts** — sticky is in-memory only;
    preserved Chatwoot labels survive because they are re-read from the API.
-9. **Guessing `new-user` without Mongo** — unknown completed-gig state skips
-   the label.
-10. **Expecting `gig-complete` to stick** — it is turn-scoped like proof
+10. **Guessing `new-user` without Mongo** — unknown completed-gig state skips
+    the label.
+11. **Expecting `gig-complete` to stick** — it is turn-scoped like proof
     verdicts; later turns drop it under `replace=True`.
 
 ---
