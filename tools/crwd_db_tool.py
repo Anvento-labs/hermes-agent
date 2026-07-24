@@ -4,8 +4,9 @@ Registers a single LLM-callable tool ``crwd_db`` (gated on ``CRWD_MONGO_URI``)
 that reads CRWD's MongoDB data through a handful of purpose-built actions plus
 one guarded custom-query escape hatch:
 
-- ``list_active_gigs`` -- open gigs sorted by soonest end_date; pass ``user_id`` to
-  exclude gigs the member already has a membership for
+- ``list_active_gigs`` -- open gigs sorted by soonest end_date; excludes spots-full
+  gigs (accepted members >= number_of_people); pass ``user_id`` to also exclude
+  gigs the member already has a membership for
 - ``get_gig_details``  -- fuzzy-match gigs by name / free text, ranked candidates
 - ``get_user``         -- look up one user by email, phone, or _id
 - ``get_user_gigs``    -- campaigns a user is an active member of
@@ -591,18 +592,99 @@ def _get_enrolled_gig_ids(user_id: str) -> set[str]:
     return enrolled
 
 
+def _spots_full_gig_oids() -> list:
+    """ObjectIds of open gigs with no remaining spots (matches CRWD Explore).
+
+    A gig is full when ``number_of_people > 0`` and the count of non-deleted
+    ``added_crwd_members`` rows with ``isAccepted: true`` and
+    ``status != "Inactive"`` is >= capacity. Pending / waitlisted rows
+    (``isAccepted: false``) and Inactive memberships do not consume spots.
+    Missing or zero ``number_of_people`` means uncapped — never returned here.
+    """
+    pipeline: List[Dict[str, Any]] = [
+        {
+            "$match": {
+                **_open_gig_filter(),
+                # Keep rows that declare a capacity; coerce later so string "40" works.
+                "number_of_people": {"$exists": True, "$nin": [None, 0, "0", ""]},
+            },
+        },
+        {
+            "$lookup": {
+                "from": _COLL_MEMBERS,
+                "let": {"gig_id": "$_id"},
+                "pipeline": [
+                    {
+                        "$match": {
+                            "$expr": {"$eq": ["$crwd_id", "$$gig_id"]},
+                            "isAccepted": True,
+                            "isDeleted": {"$ne": True},
+                            # Inactive accepted rows no longer occupy a joinable slot.
+                            "status": {"$ne": "Inactive"},
+                        },
+                    },
+                    {"$count": "n"},
+                ],
+                "as": "_accepted",
+            },
+        },
+        {
+            "$addFields": {
+                "_accepted_count": {
+                    "$ifNull": [{"$arrayElemAt": ["$_accepted.n", 0]}, 0],
+                },
+                # Coerce string capacities (e.g. "40") so $gte compares numbers.
+                "_capacity": {
+                    "$convert": {
+                        "input": "$number_of_people",
+                        "to": "int",
+                        "onError": 0,
+                        "onNull": 0,
+                    },
+                },
+            },
+        },
+        {
+            "$match": {
+                "$expr": {
+                    "$and": [
+                        {"$gt": ["$_capacity", 0]},
+                        {"$gte": ["$_accepted_count", "$_capacity"]},
+                    ],
+                },
+            },
+        },
+        {"$project": {"_id": 1}},
+    ]
+    return [
+        doc["_id"]
+        for doc in _db()[_COLL_CRWDS].aggregate(pipeline, maxTimeMS=_MAX_TIME_MS)
+        if doc.get("_id") is not None
+    ]
+
+
 def _list_active_gigs(limit: int = 5, user_id: str = "", offset: int = 0) -> str:
     row_limit = max(1, min(int(limit or 5), _HARD_LIMIT))
     row_offset = max(0, int(offset or 0))
     query: Dict[str, Any] = dict(_open_gig_filter())
     user_id = (user_id or "").strip()
     excluded_count = 0
+    excluded_oids: list = list(_spots_full_gig_oids())
     if user_id:
         enrolled_ids = _get_enrolled_gig_ids(user_id)
         excluded_count = len(enrolled_ids)
         enrolled_oids = [oid for gid in enrolled_ids if (oid := _oid(gid)) is not None]
-        if enrolled_oids:
-            query["_id"] = {"$nin": enrolled_oids}
+        excluded_oids.extend(enrolled_oids)
+    if excluded_oids:
+        # Dedupe while preserving ObjectId identity for $nin.
+        seen: set[str] = set()
+        unique_oids = []
+        for oid in excluded_oids:
+            key = str(oid)
+            if key not in seen:
+                seen.add(key)
+                unique_oids.append(oid)
+        query["_id"] = {"$nin": unique_oids}
     coll = _db()[_COLL_CRWDS]
     total = coll.count_documents(query, maxTimeMS=_MAX_TIME_MS)
     cursor = (
@@ -2352,7 +2434,9 @@ CRWD_DB_SCHEMA = {
         "membership, a member's approved products (buy links), their receipt/"
         "proof upload status, and their account notifications. Read-only apart "
         "from the proof-submission actions below. "
-        "list_active_gigs = active gigs the member has NOT joined; get_user_gigs / "
+        "list_active_gigs = active joinable gigs the member has NOT joined "
+        "(excludes spots-full campaigns where accepted members >= number_of_people, "
+        "matching Explore); get_user_gigs / "
         "get_user_gig_status = enrolled/in-progress — if intent between those two is "
         "unclear, ask via clarify before choosing. "
         "Use the specific action if it fits (list_active_gigs, get_gig_details, "

@@ -278,10 +278,11 @@ class TestEnrolledGigExclusion:
         cursor.limit.return_value = [
             {"_id": available_oid, "name": "New Gig", "gig_stores": []},
         ]
-        with patch.object(t, "_db", return_value=_fake_db({
-            "added_crwd_members": mock_members,
-            "crwds": mock_crwds,
-        })):
+        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t, "_db", return_value=_fake_db({
+                 "added_crwd_members": mock_members,
+                 "crwds": mock_crwds,
+             })):
             out = json.loads(t.crwd_db_tool({
                 "action": "list_active_gigs",
                 "user_id": "69a6f191cb29b0b371b3a156",
@@ -304,12 +305,122 @@ class TestEnrolledGigExclusion:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({"action": "list_active_gigs"}))
         assert "excluded_enrolled_count" not in out
         assert out["has_more"] is False
         query_used = mock_crwds.find.call_args[0][0]
         assert "$nin" not in query_used.get("_id", {})
+
+
+class TestSpotsFullExclusion:
+    """Explore hides gigs when accepted members >= number_of_people."""
+
+    def test_spots_full_oids_uses_accepted_capacity_pipeline(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        full_oid = t._oid("69de702dd17560b078b2bc9a")
+        mock_crwds = MagicMock()
+        mock_crwds.aggregate.return_value = [{"_id": full_oid}]
+        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            oids = t._spots_full_gig_oids()
+        assert oids == [full_oid]
+        pipeline = mock_crwds.aggregate.call_args[0][0]
+        lookup = next(stage for stage in pipeline if "$lookup" in stage)
+        assert lookup["$lookup"]["from"] == "added_crwd_members"
+        member_match = lookup["$lookup"]["pipeline"][0]["$match"]
+        assert member_match["isAccepted"] is True
+        assert member_match["isDeleted"] == {"$ne": True}
+        assert member_match["status"] == {"$ne": "Inactive"}
+        capacity_match = next(
+            stage for stage in pipeline
+            if "$match" in stage and "$expr" in stage["$match"]
+        )
+        assert capacity_match["$match"]["$expr"]["$and"][1] == {
+            "$gte": ["$_accepted_count", "$_capacity"],
+        }
+
+    def test_list_active_gigs_excludes_spots_full(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        full_oid = t._oid("69de702dd17560b078b2bc9a")
+        open_oid = t._oid("69b8614f1083b9302fd0a9a7")
+        mock_crwds = MagicMock()
+        cursor = MagicMock()
+        mock_crwds.find.return_value = cursor
+        mock_crwds.count_documents.return_value = 1
+        cursor.sort.return_value = cursor
+        cursor.skip.return_value = cursor
+        cursor.limit.return_value = [
+            {"_id": open_oid, "name": "Open Gig", "gig_stores": []},
+        ]
+        with patch.object(t, "_spots_full_gig_oids", return_value=[full_oid]), \
+             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            out = json.loads(t.crwd_db_tool({"action": "list_active_gigs"}))
+        assert len(out["items"]) == 1
+        assert out["items"][0]["name"] == "Open Gig"
+        query_used = mock_crwds.find.call_args[0][0]
+        assert full_oid in query_used["_id"]["$nin"]
+        count_query = mock_crwds.count_documents.call_args[0][0]
+        assert full_oid in count_query["_id"]["$nin"]
+
+    def test_pending_only_does_not_make_gig_full(self, monkeypatch):
+        """isAccepted:false members must not appear in the spots-full pipeline."""
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        mock_crwds = MagicMock()
+        mock_crwds.aggregate.return_value = []
+        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            assert t._spots_full_gig_oids() == []
+        member_match = mock_crwds.aggregate.call_args[0][0][1]["$lookup"]["pipeline"][0]["$match"]
+        assert member_match["isAccepted"] is True
+
+    def test_inactive_accepted_excluded_from_capacity_count(self, monkeypatch):
+        """Inactive accepted members must not consume spots (Crown of Glory case)."""
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        mock_crwds = MagicMock()
+        mock_crwds.aggregate.return_value = []
+        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            t._spots_full_gig_oids()
+        member_match = mock_crwds.aggregate.call_args[0][0][1]["$lookup"]["pipeline"][0]["$match"]
+        assert member_match["isAccepted"] is True
+        assert member_match["status"] == {"$ne": "Inactive"}
+
+    def test_zero_capacity_not_in_spots_full_match(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        mock_crwds = MagicMock()
+        mock_crwds.aggregate.return_value = []
+        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            t._spots_full_gig_oids()
+        first_match = mock_crwds.aggregate.call_args[0][0][0]["$match"]
+        assert first_match["number_of_people"] == {
+            "$exists": True, "$nin": [None, 0, "0", ""],
+        }
+
+    def test_list_merges_enrolled_and_spots_full_into_nin(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        enrolled_oid = t._oid("69e6a4d6cea992cbda22b381")
+        full_oid = t._oid("69de702dd17560b078b2bc9a")
+        mock_members = MagicMock()
+        mock_members.find.return_value = [{"crwd_id": enrolled_oid}]
+        mock_crwds = MagicMock()
+        cursor = MagicMock()
+        mock_crwds.find.return_value = cursor
+        mock_crwds.count_documents.return_value = 0
+        cursor.sort.return_value = cursor
+        cursor.skip.return_value = cursor
+        cursor.limit.return_value = []
+        with patch.object(t, "_spots_full_gig_oids", return_value=[full_oid]), \
+             patch.object(t, "_db", return_value=_fake_db({
+                 "added_crwd_members": mock_members,
+                 "crwds": mock_crwds,
+             })):
+            out = json.loads(t.crwd_db_tool({
+                "action": "list_active_gigs",
+                "user_id": "69a6f191cb29b0b371b3a156",
+            }))
+        assert out["excluded_enrolled_count"] == 1
+        nin = mock_crwds.find.call_args[0][0]["_id"]["$nin"]
+        assert enrolled_oid in nin
+        assert full_oid in nin
 
 
 class TestListActiveGigsPagination:
@@ -325,7 +436,8 @@ class TestListActiveGigsPagination:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = [self._gig_doc(f"69b8614f1083b9302fd0a9{i:02x}", f"Gig {i}") for i in range(5)]
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({"action": "list_active_gigs", "limit": 5}))
         assert out["total"] == 12
         assert out["offset"] == 0
@@ -344,7 +456,8 @@ class TestListActiveGigsPagination:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = [self._gig_doc("69b8614f1083b9302fd0a9a7", "Gig 6")]
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({
                 "action": "list_active_gigs",
                 "limit": 5,
@@ -364,7 +477,8 @@ class TestListActiveGigsPagination:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = [self._gig_doc("69b8614f1083b9302fd0a9a7", "Gig 10")]
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({
                 "action": "list_active_gigs",
                 "limit": 5,
