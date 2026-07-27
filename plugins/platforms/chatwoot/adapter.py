@@ -846,6 +846,15 @@ class ChatwootAdapter(BasePlatformAdapter):
         except Exception:
             logger.debug("[chatwoot] failed to bind webhook CRWD hint", exc_info=True)
         try:
+            from plugins.platforms.chatwoot import unregistered
+
+            # Confirmed-unregistered contacts get a canned signup reply +
+            # label instead of an agent turn (no LLM spend).
+            if await unregistered.maybe_short_circuit(self, event):
+                return
+        except Exception:
+            logger.debug("[chatwoot] unregistered-contact gate failed", exc_info=True)
+        try:
             from plugins.platforms.chatwoot import enrichment
             task = asyncio.create_task(enrichment.enrich(self, event))
             self._background_tasks.add(task)

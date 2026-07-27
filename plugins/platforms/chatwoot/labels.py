@@ -49,6 +49,11 @@ APPLIED_LABELS: List[Dict[str, Any]] = [
         "description": "Member has not yet completed a gig (required proofs accepted)",
         "color": "#3498db",
     },
+    {
+        "title": "unregistered-user",
+        "description": "Contact has no CRWD account (no Mongo match by phone/email); signup reply sent without LLM",
+        "color": "#95a5a6",
+    },
     # Fraud risk bands -- mutually exclusive, owned by crwd-risk-analyser and
     # derived from the contact's risk_score. Never shown to the member. Unlike
     # topic labels, these are not classified per turn: labels_auto preserves
