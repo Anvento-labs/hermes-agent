@@ -258,9 +258,9 @@ stored and owns the score. Don't call `crwd_risk_score`, and don't guess a delta
   will follow up. **Never a reason, never a reason code.** A member must not be
   able to tell a duplicate from a wrong product from a bad date.
 
-Keep it short and in **plain text** — no markdown, no bullets, no headers. This is
-a chat widget. (Gig-name links from `crwd_db` are the one exception: paste them
-verbatim.)
+Keep it short — this is a chat widget. Markdown (links, light bold/italics,
+short lists) is fine; avoid long headers or walls of formatting. Paste
+gig-name links from `crwd_db` verbatim.
 
 ## Reason codes
 

@@ -63,5 +63,4 @@ title in `name_plain` / `gig_name_plain`. The id comes straight from whichever
 
 Gig-facing skills paste `name` / `gig_name` verbatim so the **title is the
 clickable link**. Do not also append a bare URL after the name, and do not
-rebuild `/explore/` URLs. (Gig-name markdown links are the allowed exception to
-the coach "no markdown formatting" style.)
+rebuild `/explore/` URLs. Member chat and Chatwoot both render Markdown links.
