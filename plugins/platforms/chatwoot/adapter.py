@@ -855,6 +855,16 @@ class ChatwootAdapter(BasePlatformAdapter):
         except Exception:
             logger.debug("[chatwoot] unregistered-contact gate failed", exc_info=True)
         try:
+            from plugins.platforms.chatwoot import ai_mode
+
+            # Opt-in contact checkbox: only spend LLM when ai_mode is true.
+            if await ai_mode.maybe_short_circuit(self, event):
+                return
+        except Exception:
+            # Fail closed — do not spend LLM if the gate itself errors.
+            logger.debug("[chatwoot] ai_mode gate failed", exc_info=True)
+            return
+        try:
             from plugins.platforms.chatwoot import enrichment
             task = asyncio.create_task(enrichment.enrich(self, event))
             self._background_tasks.add(task)
