@@ -80,6 +80,8 @@ class TestHook:
         assert "list_active_gigs" in out["context"]
         assert "get_user_gig_status" in out["context"]
         assert "clarify" in out["context"]
+        assert "plain language" in out["context"]
+        assert "never say turn" in out["context"]
         assert "Gig scope routing" not in out["context"]
         assert "AMBIGUOUS" not in out["context"]
         assert "MUST" not in out["context"]

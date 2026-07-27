@@ -414,6 +414,11 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
             (
                 "- If that distinction is unclear, use the clarify tool before listing."
             ),
+            (
+                "- Member replies: plain language only — never say turn, tool, API, or "
+                "other agent jargon. Prefer just now / a moment ago / earlier in this "
+                "chat if comparing to something you already showed."
+            ),
         ]
         if cross_user:
             lines.extend([

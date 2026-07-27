@@ -49,14 +49,19 @@ optionally offer one engaging follow-up (next step, or a reminder via `crwd-remi
 2. **A specific gig by name/text:** `get_gig_details` (fuzzy-matches, returns ranked
    candidates with an `_id`). **Confirm the right `_id`** before you quote details or use it
    elsewhere — if two candidates are close, ask which one they mean.
-3. **Pending approval (not in progress yet):** `get_waitlisted_gigs` with `user_id` from the
-   `[CRWD member]` context line. Returns gigs they applied for but are not yet accepted
-   (`isAccepted: false` — Request Pending Approval). Use this for "pending approval" or
-   "still waiting to be accepted" — not `get_user_gigs` or `list_active_gigs`.
-4. **Their in-progress gigs:** `get_user_gigs`. The current member's CRWD `user_id` is
-   provided to you in context (a `[CRWD member]` line) — pass it straight through as `user_id`.
-   This shows gigs they're **accepted into** (`isAccepted: true`, Home → Active / IN PROGRESS),
-   not pending-approval applications.
+3. **Pending approval (not in progress yet):** Call `get_waitlisted_gigs` **before you
+   reply** with `user_id` from the `[CRWD member]` context line — do not reuse an earlier
+   message's tool result in this chat. Returns gigs they applied for but are not yet
+   accepted (`isAccepted: false` — Request Pending Approval). Use this for "pending
+   approval" or "still waiting to be accepted" — not `get_user_gigs` or `list_active_gigs`.
+4. **Their in-progress / "what gigs am I part of" asks:** Call `get_user_gigs` or
+   `get_user_gig_status` **before you reply** before naming any enrolled gigs — never
+   answer from an earlier message's tool output even if gig names are still in chat
+   history. When the ask covers both accepted and pending membership ("part of", "am I
+   in", "my gigs"), use `get_user_gig_status` with `include_waitlisted=true`, or call
+   `get_user_gigs` plus `get_waitlisted_gigs`. Pass `user_id` from the `[CRWD member]`
+   line. `get_user_gigs` alone shows gigs they're **accepted into** (`isAccepted: true`,
+   Home → Active / IN PROGRESS), not pending-approval applications.
 5. **Past participation / history:** `get_user_gig_history` with `user_id`. Returns prior
    membership rows (including completed, rejected, or deleted gigs). Use for "what gigs have
    I done before?" — not `get_user_gigs` (in-progress only) or `list_active_gigs`.
@@ -120,6 +125,10 @@ For the deeper lifecycle detail, load
 ## Pitfalls
 
 - Don't quote a gig's payout/deadline from memory — look it up.
+- **Membership lists go stale** when the member joins or leaves between messages. Never
+  reuse a previous message's `get_user_gigs` / `get_user_gig_status` /
+  `get_waitlisted_gigs` output to answer "what gigs am I in / part of / enrolled in?" —
+  always fetch again before listing.
 - **Do not combine `list_active_gigs` and `get_user_gigs` when answering availability**
   questions — enrolled gigs belong on Home, not Explore. Use step 1 alone for "what's
   available?" and step 4 alone for "what active gigs do I have?"

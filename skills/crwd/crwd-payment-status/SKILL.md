@@ -95,6 +95,9 @@ thing this skill does. Before or alongside answering the specific status questio
 
 ## Pitfalls
 
+- Gig enrollment from this skill's `get_user_gigs` / status lookup is for **payment
+  context in this reply** only — do not treat it as a durable membership roster for later
+  "what gigs am I in?" questions (those must re-fetch via `crwd-gig-discovery`).
 - **Don't claim the money landed** unless Dot actually reports it sent/paid.
   "Approved" and "paid" are different states — read them separately.
 - Approval gates payment. If it's not approved/completed, there's no payout yet —
