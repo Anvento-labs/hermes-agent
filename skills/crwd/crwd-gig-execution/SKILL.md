@@ -84,8 +84,9 @@ skill (proof is just the tail of doing the gig).
 7. **Check submission status** if they ask "did it go through?" / "what have I sent?" —
    `get_user_proofs(user_id[, crwd_id])` is what they submitted **in this chat** and how it
    was judged. **Never ask them for an order number to find their own proof.**
-   `get_user_receipts` shows the app's own receipt pipeline, which is a separate record —
-   a member can have proof in one and not the other.
+   `get_user_gig_status` next_step / stage also follows **chat** `proof_submissions` only
+   (not the app receipt tables). `get_user_receipts` is app-pipeline history for context —
+   it does **not** drive coach stage.
 8. **If a submission is rejected → hand off** (`crwd-handoff`). Do not guess the rejection
    reason or coach a resubmission yourself — that's a human's job.
 

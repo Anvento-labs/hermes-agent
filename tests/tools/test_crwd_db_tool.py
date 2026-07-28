@@ -1868,13 +1868,18 @@ class TestArchivedGigsAreInvisible:
         empty = MagicMock()
         # Progress collections are queried as find().sort().limit() -> iterable.
         empty.find.return_value.sort.return_value.limit.return_value = []
+        # _gig_proof_completion iterates find() directly (no sort/limit).
+        empty.find.return_value.__iter__ = lambda self: iter([])
         db = _fake_db({
             "added_crwd_members": members, "crwds": crwds,
-            "user_product_purchases": empty, "gig_store_orders": empty,
-            "gig_product_reviews": empty, "order_receipt_reviews": empty,
+            "user_product_purchases": empty, "proof_submissions": empty,
         })
         db.list_collection_names = MagicMock(return_value=[])
-        with patch.object(t.connection, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db), patch.object(
+            t.stage,
+            "_gig_proof_completion",
+            return_value={"complete": False, "determinable": False, "outstanding": []},
+        ):
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_gig_status", "user_id": "user-a"}))
         assert out["count"] == 1

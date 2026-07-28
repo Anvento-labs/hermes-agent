@@ -52,9 +52,15 @@ When a member submits evidence for a gig (photo, PDF, or link), the coach must:
 **This skill does not**
 
 - Move payout or gig state in CRWD’s product DB (only writes to agent-owned
-  `proof_submissions`).
+  `proof_submissions`). It does **not** write `gig_store_orders` /
+  `order_receipt_reviews` / `gig_product_reviews`.
 - Write the member’s fraud **risk score** (`crwd-risk-analyser` owns that).
 - Assign Chatwoot proof/gig labels (the end-of-turn auto-labeler does).
+
+**Coach gig status reads these writes:** `get_user_gig_status` /
+`compute_gig_stage` derive receipt/review progress from `proof_submissions`
+only (plus app membership / product-assignment / `hasPaid`). App-only uploads
+do not advance coach stage until a chat `store_proof` exists.
 
 **Standing rules (skill)**
 

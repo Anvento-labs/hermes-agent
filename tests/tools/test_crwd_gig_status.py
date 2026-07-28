@@ -1,12 +1,10 @@
-"""Tests for crwd_db gig status / next-step state machine."""
+"""Tests for crwd_db gig status / next-step state machine (Hermes proofs only)."""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from tools import crwd_db_tool as t
 
@@ -28,125 +26,162 @@ def _membership(**kwargs):
     return base
 
 
+def _stage(membership=None, gig=None, purchases=None, chat_proofs=None,
+           proof_completion=None, **over):
+    return t.compute_gig_stage(
+        membership if membership is not None else _membership(**over.pop("membership", {})),
+        gig if gig is not None else _gig(**over.pop("gig", {})),
+        purchases=purchases if purchases is not None else over.get("purchases", []),
+        chat_proofs=chat_proofs if chat_proofs is not None else over.get("chat_proofs", []),
+        proof_completion=proof_completion if proof_completion is not None
+        else over.get("proof_completion"),
+    )
+
+
 class TestComputeGigStage:
     def test_request_pending_approval(self):
-        out = t.compute_gig_stage(
-            _membership(isAccepted=False),
-            _gig(),
-            purchases=[], store_orders=[], product_reviews=[], order_receipt_reviews=[],
-        )
+        out = _stage(membership=_membership(isAccepted=False))
         assert out["stage"] == "request_pending_approval"
         assert "pending approval" in out["next_step"].lower()
         assert "waitlist" not in out["next_step"].lower()
 
     def test_rejected_handoff(self):
-        out = t.compute_gig_stage(
-            _membership(rejectionReason="duplicate"),
-            _gig(),
-            purchases=[], store_orders=[], product_reviews=[], order_receipt_reviews=[],
-        )
+        out = _stage(membership=_membership(rejectionReason="duplicate"))
         assert out["stage"] == "rejected"
         assert out["handoff_recommended"] is True
 
     def test_is_approved_on_membership_ignored(self):
-        out = t.compute_gig_stage(
-            _membership(isAccepted=True, isApproved=False),
-            _gig(),
-            purchases=[], store_orders=[], product_reviews=[], order_receipt_reviews=[],
-        )
+        out = _stage(membership=_membership(isAccepted=True, isApproved=False))
         assert out["stage"] == "need_purchase"
 
     def test_need_purchase_includes_buy_link(self):
         gig = _gig(gig_stores=[{"products": [{"product_url": "https://buy.example/p"}]}])
-        out = t.compute_gig_stage(
-            _membership(),
-            gig,
-            purchases=[], store_orders=[], product_reviews=[], order_receipt_reviews=[],
-        )
+        out = _stage(gig=gig, purchases=[])
         assert out["stage"] == "need_purchase"
         assert "https://buy.example/p" in out["next_step"]
 
+    def test_need_receipt_when_no_chat_proofs(self):
+        out = _stage(purchases=[{"product_url": "http://u"}], chat_proofs=[])
+        assert out["stage"] == "need_receipt"
+
     def test_irl_need_receipt(self):
-        out = t.compute_gig_stage(
-            _membership(),
-            _gig(gig_type="irl"),
+        out = _stage(
+            gig=_gig(gig_type="irl"),
             purchases=[{"product_url": "http://u"}],
-            store_orders=[],
-            product_reviews=[],
-            order_receipt_reviews=[],
+            chat_proofs=[],
         )
         assert out["stage"] == "need_receipt"
 
-    def test_irl_receipt_review(self):
-        out = t.compute_gig_stage(
-            _membership(),
-            _gig(gig_type="irl"),
+    def test_receipt_review_from_needs_human(self):
+        out = _stage(
             purchases=[{}],
-            store_orders=[{"receipt_file": "r.jpg", "isApproved": False}],
-            product_reviews=[],
-            order_receipt_reviews=[],
+            chat_proofs=[{
+                "proof_type": "receipt_other",
+                "status": "needs_human",
+            }],
         )
         assert out["stage"] == "receipt_review"
 
-    def test_irl_need_review_after_receipt_approved(self):
-        out = t.compute_gig_stage(
-            _membership(),
-            _gig(gig_type="irl"),
+    def test_receipt_rejected(self):
+        out = _stage(
             purchases=[{}],
-            store_orders=[{"receipt_file": "r.jpg", "isApproved": True}],
-            product_reviews=[],
-            order_receipt_reviews=[],
+            chat_proofs=[{
+                "proof_type": "receipt_target",
+                "status": "rejected",
+            }],
+        )
+        assert out["stage"] == "receipt_rejected"
+        assert out["handoff_recommended"] is True
+
+    def test_need_review_after_receipt_accepted(self):
+        out = _stage(
+            purchases=[{}],
+            chat_proofs=[{
+                "proof_type": "receipt_amazon",
+                "status": "accepted",
+            }],
         )
         assert out["stage"] == "need_review"
+        assert out["progress"]["receipt_approved"] is True
 
-    def test_web_need_receipt(self):
-        out = t.compute_gig_stage(
-            _membership(),
-            _gig(gig_type="web_based"),
+    def test_rejected_then_accepted_advances(self):
+        out = _stage(
             purchases=[{}],
-            store_orders=[],
-            product_reviews=[],
-            order_receipt_reviews=[],
-        )
-        assert out["stage"] == "need_receipt"
-
-    def test_web_need_review_after_order_approved(self):
-        out = t.compute_gig_stage(
-            _membership(),
-            _gig(gig_type="web_based"),
-            purchases=[{}],
-            store_orders=[],
-            product_reviews=[],
-            order_receipt_reviews=[
-                {"type": "order_receipt", "order_receipt_file": "o.png", "isOrderApproved": True},
+            chat_proofs=[
+                {"proof_type": "receipt_other", "status": "rejected"},
+                {"proof_type": "receipt_other", "status": "accepted"},
             ],
         )
         assert out["stage"] == "need_review"
+        assert out["progress"]["receipt_approved"] is True
 
-    def test_awaiting_payout(self):
-        out = t.compute_gig_stage(
-            _membership(),
-            _gig(gig_type="web_based"),
+    def test_awaiting_payout_when_review_accepted(self):
+        out = _stage(
             purchases=[{}],
-            store_orders=[],
-            product_reviews=[],
-            order_receipt_reviews=[
-                {"type": "order_receipt", "order_receipt_file": "o.png", "isOrderApproved": True},
-                {"type": "review", "review": "great", "isOrderApproved": True, "status": "approved"},
+            chat_proofs=[
+                {"proof_type": "receipt_other", "status": "accepted"},
+                {"proof_type": "review_screenshot", "status": "accepted"},
             ],
         )
         assert out["stage"] == "awaiting_payout"
 
-    def test_paid(self):
-        out = t.compute_gig_stage(
-            _membership(hasPaid=True),
-            _gig(gig_type="web_based"),
+    def test_awaiting_payout_via_is_gig_completed(self):
+        out = _stage(
             purchases=[{}],
-            store_orders=[],
-            product_reviews=[],
-            order_receipt_reviews=[
-                {"type": "order_receipt", "isOrderApproved": True},
-                {"type": "review", "review": "great", "status": "approved"},
+            chat_proofs=[{
+                "proof_type": "receipt_other",
+                "status": "accepted",
+                "is_gig_completed": True,
+            }],
+        )
+        assert out["stage"] == "awaiting_payout"
+
+    def test_awaiting_payout_via_proof_completion(self):
+        out = _stage(
+            purchases=[{}],
+            chat_proofs=[{"proof_type": "receipt_other", "status": "accepted"}],
+            proof_completion={
+                "complete": True,
+                "determinable": True,
+                "outstanding": [],
+            },
+        )
+        assert out["stage"] == "awaiting_payout"
+
+    def test_need_review_via_proof_completion_outstanding(self):
+        out = _stage(
+            purchases=[{}],
+            chat_proofs=[{"proof_type": "receipt_other", "status": "accepted"}],
+            proof_completion={
+                "complete": False,
+                "determinable": True,
+                "outstanding": ["requires_review_link"],
+            },
+        )
+        assert out["stage"] == "need_review"
+
+    def test_review_review_from_needs_human(self):
+        out = _stage(
+            purchases=[{}],
+            chat_proofs=[
+                {"proof_type": "receipt_other", "status": "accepted"},
+                {"proof_type": "ugc_link", "status": "needs_human"},
+            ],
+            proof_completion={
+                "complete": False,
+                "determinable": True,
+                "outstanding": ["requires_ugc_post"],
+            },
+        )
+        assert out["stage"] == "review_review"
+
+    def test_paid(self):
+        out = _stage(
+            membership=_membership(hasPaid=True),
+            purchases=[{}],
+            chat_proofs=[
+                {"proof_type": "receipt_other", "status": "accepted"},
+                {"proof_type": "review_screenshot", "status": "accepted"},
             ],
         )
         assert out["stage"] == "paid"
@@ -199,22 +234,11 @@ class TestBuildUserGigStatus:
         pc.sort.return_value = pc
         pc.limit.return_value = []
 
-        mock_store = MagicMock()
-        sc = MagicMock()
-        mock_store.find.return_value = sc
-        sc.sort.return_value = sc
-        sc.limit.return_value = []
-
-        mock_reviews = MagicMock()
-        rc = MagicMock()
-        mock_reviews.find.return_value = rc
-        rc.sort.return_value = rc
-        rc.limit.return_value = []
-
-        mock_orr = MagicMock()
-        oc = MagicMock()
-        mock_orr.find.return_value = oc
-        oc.limit.return_value = []
+        mock_proofs = MagicMock()
+        pr = MagicMock()
+        mock_proofs.find.return_value = pr
+        pr.sort.return_value = pr
+        pr.limit.return_value = []
 
         with patch.object(
             t.connection,
@@ -223,10 +247,12 @@ class TestBuildUserGigStatus:
                 "added_crwd_members": mock_members,
                 "crwds": mock_crwds,
                 "user_product_purchases": mock_purchases,
-                "gig_store_orders": mock_store,
-                "gig_product_reviews": mock_reviews,
-                "order_receipt_reviews": mock_orr,
+                "proof_submissions": mock_proofs,
             },
+        ), patch.object(
+            t.stage,
+            "_gig_proof_completion",
+            return_value={"complete": False, "determinable": False, "outstanding": []},
         ):
             out = t.build_user_gig_status(user_id)
 
@@ -234,6 +260,50 @@ class TestBuildUserGigStatus:
         assert len(out["items"]) == 1
         assert out["items"][0]["gig_name"] == "Pul Tool"
         assert out["items"][0]["stage"] == "need_purchase"
+
+    def test_accepted_chat_receipt_not_need_receipt(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        user_id = "69a6f191cb29b0b371b3a156"
+        member_oid = t._oid(user_id)
+        gig_oid = t._oid("69e6a4d6cea992cbda22b381")
+
+        mock_members = MagicMock()
+        mock_members.find.return_value = [{
+            "member": member_oid,
+            "crwd_id": gig_oid,
+            "isAccepted": True,
+            "hasPaid": False,
+            "status": "Active",
+        }]
+        mock_crwds = MagicMock()
+        mock_crwds.find.return_value = [{
+            "_id": gig_oid, "name": "MR. D.I.Y.", "gig_type": "web_based", "gig_stores": [],
+        }]
+
+        with patch.object(
+            t.connection,
+            "_db",
+            return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
+        ), patch.object(
+            t.stage,
+            "_progress_for_crwd",
+            return_value={
+                "purchases": [{"product_name": "X"}],
+                "chat_proofs": [{
+                    "proof_type": "receipt_other",
+                    "status": "accepted",
+                    "is_gig_completed": True,
+                }],
+            },
+        ), patch.object(
+            t.stage,
+            "_gig_proof_completion",
+            return_value={"complete": True, "determinable": True, "outstanding": []},
+        ):
+            out = t.build_user_gig_status(user_id)
+
+        assert out["items"][0]["stage"] == "awaiting_payout"
+        assert out["items"][0]["stage"] != "need_receipt"
 
     def test_sorts_by_soonest_end_date(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
@@ -258,16 +328,17 @@ class TestBuildUserGigStatus:
             {"_id": gig_far, "name": "Far", "gig_type": "web_based", "gig_stores": [],
              "end_date": dt.datetime(2026, 12, 1)},
         ]
-        empty_progress = {
-            "purchases": [], "store_orders": [], "product_reviews": [],
-            "order_receipt_reviews": [],
-        }
+        empty_progress = {"purchases": [], "chat_proofs": []}
 
         with patch.object(
             t.connection,
             "_db",
             return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
-        ), patch.object(t.stage, "_progress_for_crwd", return_value=empty_progress):
+        ), patch.object(t.stage, "_progress_for_crwd", return_value=empty_progress), \
+             patch.object(
+                 t.stage, "_gig_proof_completion",
+                 return_value={"complete": False, "determinable": False, "outstanding": []},
+             ):
             out = t.build_user_gig_status(user_id)
 
         assert [row["gig_name"] for row in out["items"]] == ["Soon", "Mid", "Far"]
@@ -298,16 +369,17 @@ class TestBuildUserGigStatus:
         mock_members.find.return_value = members
         mock_crwds = MagicMock()
         mock_crwds.find.return_value = gigs
-        empty_progress = {
-            "purchases": [], "store_orders": [], "product_reviews": [],
-            "order_receipt_reviews": [],
-        }
+        empty_progress = {"purchases": [], "chat_proofs": []}
 
         with patch.object(
             t.connection,
             "_db",
             return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
-        ), patch.object(t.stage, "_progress_for_crwd", return_value=empty_progress):
+        ), patch.object(t.stage, "_progress_for_crwd", return_value=empty_progress), \
+             patch.object(
+                 t.stage, "_gig_proof_completion",
+                 return_value={"complete": False, "determinable": False, "outstanding": []},
+             ):
             out = t.build_user_gig_status(user_id)
 
         assert len(out["items"]) == 8
@@ -382,33 +454,20 @@ class TestNextStepNeverSendsProofToTheApp:
     are emitted by the tool, so no skill can override them -- a member sent to the
     app hunts for a Submit Proof button that does not exist."""
 
-    def _stage(self, **over):
-        membership = {"isAccepted": True, "isApproved": True}
-        membership.update(over.pop("membership", {}))
-        gig = {"name": "Self Obsessed", "gig_type": "web_based"}
-        gig.update(over.pop("gig", {}))
-        return t.compute_gig_stage(
-            membership, gig,
-            purchases=over.get("purchases", []),
-            store_orders=over.get("store_orders", []),
-            product_reviews=over.get("product_reviews", []),
-            order_receipt_reviews=over.get("order_receipt_reviews", []),
-        )
-
     def test_web_need_receipt_points_at_the_chat(self):
-        out = self._stage(purchases=[{"product_name": "Gummy"}])
+        out = _stage(purchases=[{"product_name": "Gummy"}])
         assert out["stage"] == "need_receipt"
         assert "in the app" not in out["next_step"]
         assert "chat" in out["next_step"]
 
     def test_irl_need_receipt_points_at_the_chat(self):
-        out = self._stage(gig={"gig_type": "irl"}, purchases=[{"product_name": "X"}])
+        out = _stage(gig=_gig(gig_type="irl"), purchases=[{"product_name": "X"}])
         assert "in the app" not in out["next_step"]
         assert "chat" in out["next_step"]
 
     def test_buying_still_points_at_the_app_buy_link(self):
         # Buying DOES happen via the app's buy link -- only proof moved to chat.
-        out = self._stage(purchases=[])
+        out = _stage(purchases=[])
         assert out["stage"] == "need_purchase"
         assert "in the app" in out["next_step"]
 
@@ -420,11 +479,9 @@ class TestProductAssignedIsNotAPurchase:
     member "the system registered that you ordered the product"."""
 
     def test_flag_is_named_for_what_it_means(self):
-        out = t.compute_gig_stage(
-            {"isAccepted": True, "isApproved": True},
-            {"name": "Self Obsessed", "gig_type": "web_based"},
+        out = _stage(
             purchases=[{"product_name": "Gummy", "source": "join_approved"}],
-            store_orders=[], product_reviews=[], order_receipt_reviews=[],
+            chat_proofs=[],
         )
         assert out["progress"]["product_assigned"] is True
         # The old name is a claim the data cannot support.
@@ -433,11 +490,9 @@ class TestProductAssignedIsNotAPurchase:
     def test_join_approved_alone_never_claims_a_purchase(self):
         # A member approved 10 seconds ago who has bought nothing still gets a
         # user_product_purchases row. Nothing in the payload may say otherwise.
-        out = t.compute_gig_stage(
-            {"isAccepted": True, "isApproved": True},
-            {"name": "Self Obsessed", "gig_type": "web_based"},
+        out = _stage(
             purchases=[{"product_name": "Gummy", "source": "join_approved"}],
-            store_orders=[], product_reviews=[], order_receipt_reviews=[],
+            chat_proofs=[],
         )
         blob = json.dumps(out).lower()
         assert "purchase is confirmed" not in blob

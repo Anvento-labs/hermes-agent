@@ -11,10 +11,8 @@ from tools.registry import tool_error
 from tools.crwd_db import connection as _conn
 from tools.crwd_db.connection import (
     _COLL_CRWDS,
-    _COLL_GIG_PRODUCT_REVIEWS,
-    _COLL_GIG_STORE_ORDERS,
     _COLL_MEMBERS,
-    _COLL_ORDER_RECEIPT_REVIEWS,
+    _COLL_PROOFS,
     _COLL_PURCHASES,
     _GIG_FIELDS,
     _HARD_LIMIT,
@@ -28,14 +26,19 @@ from tools.crwd_db.connection import (
 
 from tools.crwd_db.gigs import _normalize, _score
 from tools.crwd_db.membership import (
-    _end_date_sort_key,
     _gig_type_key,
     _joined_member_filter,
-    _member_or_filter,
     _sort_members_by_gig_end_date,
     _waitlisted_member_filter,
 )
+from tools.crwd_db.proofs import _RECEIPT_TYPES, _gig_proof_completion
 from tools.crwd_db.serialize import _serialize_doc
+
+_REVIEW_TYPES = frozenset({"review_screenshot", "ugc_link"})
+_REVIEW_REQUIREMENT_FLAGS = frozenset({
+    "requires_review_receipt", "requires_review_link", "requires_ugc_post",
+})
+
 
 def _first_buy_link(gig: Dict[str, Any], purchases: List[Dict[str, Any]]) -> Optional[str]:
     products = _collect_buy_products(gig, purchases)
@@ -72,16 +75,98 @@ def _collect_buy_products(
     return out
 
 
+def _chat_proof_progress(chat_proofs: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Summarize Hermes ``proof_submissions`` for stage. Any accept wins over older rows."""
+    receipt_accepted = False
+    receipt_needs_human = False
+    receipt_rejected = False
+    review_accepted = False
+    review_needs_human = False
+    review_rejected = False
+    gig_completed_flag = False
+
+    for row in chat_proofs or []:
+        if row.get("is_gig_completed"):
+            gig_completed_flag = True
+        ptype = str(row.get("proof_type") or "").strip().lower()
+        status = str(row.get("status") or "").strip().lower()
+        if ptype in _RECEIPT_TYPES:
+            if status == "accepted":
+                receipt_accepted = True
+            elif status == "needs_human":
+                receipt_needs_human = True
+            elif status == "rejected":
+                receipt_rejected = True
+        elif ptype in _REVIEW_TYPES:
+            if status == "accepted":
+                review_accepted = True
+            elif status == "needs_human":
+                review_needs_human = True
+            elif status == "rejected":
+                review_rejected = True
+
+    return {
+        "receipt_submitted": receipt_accepted or receipt_needs_human or receipt_rejected,
+        "receipt_approved": receipt_accepted,
+        "receipt_needs_human": receipt_needs_human and not receipt_accepted,
+        "receipt_rejected": (
+            receipt_rejected and not receipt_accepted and not receipt_needs_human
+        ),
+        "review_submitted": review_accepted or review_needs_human or review_rejected,
+        "review_approved": review_accepted,
+        "review_needs_human": review_needs_human and not review_accepted,
+        "review_rejected": (
+            review_rejected and not review_accepted and not review_needs_human
+        ),
+        "gig_completed_flag": gig_completed_flag,
+    }
+
+
+def _payout_stage(
+    *,
+    gig_name: str,
+    has_paid: Any,
+    progress: Dict[str, Any],
+    buy_link: Optional[str],
+) -> Dict[str, Any]:
+    if has_paid:
+        return {
+            "stage": "paid",
+            "next_step": (
+                f"Payout for {gig_name} has been issued. If you don't see it yet, "
+                "check your Dot payout link or ask me to loop in support."
+            ),
+            "progress": progress,
+            "buy_link": buy_link,
+            "handoff_recommended": False,
+        }
+    return {
+        "stage": "awaiting_payout",
+        "next_step": (
+            f"All proof for {gig_name} is approved — payout typically lands in "
+            "1–2 business days via Dot."
+        ),
+        "progress": progress,
+        "buy_link": buy_link,
+        "handoff_recommended": False,
+    }
+
+
 def compute_gig_stage(
     membership: Dict[str, Any],
     gig: Dict[str, Any],
     *,
     purchases: List[Dict[str, Any]],
-    store_orders: List[Dict[str, Any]],
-    product_reviews: List[Dict[str, Any]],
-    order_receipt_reviews: List[Dict[str, Any]],
+    chat_proofs: Optional[List[Dict[str, Any]]] = None,
+    proof_completion: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Derive machine-readable stage + coach-facing next_step for one membership."""
+    """Derive machine-readable stage + coach-facing next_step for one membership.
+
+    Receipt / review progress comes only from Hermes ``proof_submissions``
+    (``chat_proofs``), not from app receipt tables. Optional ``proof_completion``
+    is the result of ``_gig_proof_completion`` (pass it from the builder, or
+    omit in unit tests and rely on type-level heuristics + ``is_gig_completed``).
+    """
     gig_name = str(gig.get("name") or "this gig").strip()
     gig_type = _gig_type_key(gig)
     products = _collect_buy_products(gig, purchases)
@@ -91,6 +176,7 @@ def compute_gig_stage(
     has_paid = membership.get("hasPaid")
     rejection = membership.get("rejectionReason") or membership.get("rejectionNotes")
 
+    chat = _chat_proof_progress(chat_proofs or [])
     progress: Dict[str, Any] = {
         # NOT a purchase confirmation. A user_product_purchases row is written when
         # the member is *approved to join* (every row in the data is
@@ -100,10 +186,10 @@ def compute_gig_stage(
         # member "the system registered that you ordered the product" when the
         # system had registered no such thing.
         "product_assigned": bool(purchases),
-        "receipt_submitted": False,
-        "receipt_approved": False,
-        "review_submitted": False,
-        "review_approved": False,
+        "receipt_submitted": chat["receipt_submitted"],
+        "receipt_approved": chat["receipt_approved"],
+        "review_submitted": chat["review_submitted"],
+        "review_approved": chat["review_approved"],
     }
 
     if rejection:
@@ -145,35 +231,22 @@ def compute_gig_stage(
 
     progress["product_assigned"] = True
 
-    if gig_type == "irl":
-        if not store_orders:
-            return {
-                "stage": "need_receipt",
-                "next_step": (
-                    f"For {gig_name}, visit the store, buy the product, then send "
-                    "your receipt right here in the chat."
-                ),
-                "progress": progress,
-                "buy_link": buy_link,
-                "handoff_recommended": False,
-            }
-        latest_order = store_orders[0]
-        progress["receipt_submitted"] = bool(
-            latest_order.get("receipt_file") or latest_order.get("receipt_files")
+    # Fast path: a store_proof row already marked this gig complete.
+    if chat["gig_completed_flag"] or (
+        proof_completion
+        and proof_completion.get("determinable")
+        and proof_completion.get("complete")
+    ):
+        progress["receipt_submitted"] = True
+        progress["receipt_approved"] = True
+        progress["review_submitted"] = True
+        progress["review_approved"] = True
+        return _payout_stage(
+            gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
         )
-        if latest_order.get("rejectionReason"):
-            return {
-                "stage": "receipt_rejected",
-                "next_step": (
-                    f"Your receipt for {gig_name} needs a human review — "
-                    "I'll connect you with support."
-                ),
-                "progress": progress,
-                "buy_link": buy_link,
-                "handoff_recommended": True,
-            }
-        if progress["receipt_submitted"] and not latest_order.get("isApproved"):
-            progress["receipt_submitted"] = True
+
+    if not chat["receipt_approved"]:
+        if chat["receipt_needs_human"]:
             return {
                 "stage": "receipt_review",
                 "next_step": (
@@ -184,99 +257,47 @@ def compute_gig_stage(
                 "buy_link": buy_link,
                 "handoff_recommended": False,
             }
-        if latest_order.get("isApproved"):
-            progress["receipt_approved"] = True
-
-        if not product_reviews:
+        if chat["receipt_rejected"]:
             return {
-                "stage": "need_review",
+                "stage": "receipt_rejected",
                 "next_step": (
-                    f"Receipt approved for {gig_name}! Next: post your review, then "
-                    "send it here in the chat."
-                ),
-                "progress": progress,
-                "buy_link": buy_link,
-                "handoff_recommended": False,
-            }
-        latest_review = product_reviews[0]
-        progress["review_submitted"] = bool(
-            latest_review.get("review_link") or latest_review.get("ugc_post_link")
-        )
-        if latest_review.get("rejectionReason"):
-            return {
-                "stage": "review_rejected",
-                "next_step": (
-                    f"Your review submission for {gig_name} needs support — "
-                    "I'll loop in a human."
+                    f"Your receipt for {gig_name} needs a human review — "
+                    "I'll connect you with support."
                 ),
                 "progress": progress,
                 "buy_link": buy_link,
                 "handoff_recommended": True,
             }
-        if progress["review_submitted"] and not latest_review.get("isApproved"):
-            return {
-                "stage": "review_review",
-                "next_step": (
-                    f"Your review for {gig_name} is under review — "
-                    "we'll notify you when it's approved."
-                ),
-                "progress": progress,
-                "buy_link": buy_link,
-                "handoff_recommended": False,
-            }
-        if latest_review.get("isApproved"):
+        if gig_type == "irl":
+            next_step = (
+                f"For {gig_name}, visit the store, buy the product, then send "
+                "your receipt right here in the chat."
+            )
+        else:
+            next_step = (
+                f"For {gig_name}, order the product, then send your order "
+                "receipt screenshot right here in the chat."
+            )
+        return {
+            "stage": "need_receipt",
+            "next_step": next_step,
+            "progress": progress,
+            "buy_link": buy_link,
+            "handoff_recommended": False,
+        }
+
+    # Receipt accepted in chat. Use requirement completion when available.
+    if proof_completion and proof_completion.get("determinable"):
+        outstanding = list(proof_completion.get("outstanding") or [])
+        if not outstanding:
+            progress["review_submitted"] = True
             progress["review_approved"] = True
-
-    else:
-        order_rows = [r for r in order_receipt_reviews if r.get("type") == "order_receipt"]
-        review_rows = [r for r in order_receipt_reviews if r.get("type") == "review"]
-
-        if not order_rows:
-            return {
-                "stage": "need_receipt",
-                "next_step": (
-                    f"For {gig_name}, order the product, then send your order "
-                    "receipt screenshot right here in the chat."
-                ),
-                "progress": progress,
-                "buy_link": buy_link,
-                "handoff_recommended": False,
-            }
-        latest_order = order_rows[0]
-        progress["receipt_submitted"] = bool(latest_order.get("order_receipt_file"))
-        if not latest_order.get("isOrderApproved") and progress["receipt_submitted"]:
-            return {
-                "stage": "receipt_review",
-                "next_step": (
-                    f"Your order receipt for {gig_name} is being reviewed — "
-                    "we'll notify you when it's approved."
-                ),
-                "progress": progress,
-                "buy_link": buy_link,
-                "handoff_recommended": False,
-            }
-        if latest_order.get("isOrderApproved"):
-            progress["receipt_approved"] = True
-
-        if not review_rows:
-            return {
-                "stage": "need_review",
-                "next_step": (
-                    f"Order approved for {gig_name}! Leave your review, then send "
-                    "the review screenshot here in the chat."
-                ),
-                "progress": progress,
-                "buy_link": buy_link,
-                "handoff_recommended": False,
-            }
-        latest_review = review_rows[0]
-        progress["review_submitted"] = bool(
-            latest_review.get("review") or latest_review.get("review_file")
-        )
-        if progress["review_submitted"] and str(latest_review.get("status") or "").lower() not in (
-            "approved", "complete", "completed",
-        ):
-            if not latest_review.get("isOrderApproved"):
+            return _payout_stage(
+                gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
+            )
+        needs_review_artifact = any(f in _REVIEW_REQUIREMENT_FLAGS for f in outstanding)
+        if needs_review_artifact:
+            if chat["review_needs_human"]:
                 return {
                     "stage": "review_review",
                     "next_step": (
@@ -287,29 +308,87 @@ def compute_gig_stage(
                     "buy_link": buy_link,
                     "handoff_recommended": False,
                 }
-        if latest_review.get("isOrderApproved") or str(
-            latest_review.get("status") or ""
-        ).lower() in ("approved", "complete", "completed"):
-            progress["review_approved"] = True
-
-    if has_paid:
+            if chat["review_rejected"]:
+                return {
+                    "stage": "review_rejected",
+                    "next_step": (
+                        f"Your review submission for {gig_name} needs support — "
+                        "I'll loop in a human."
+                    ),
+                    "progress": progress,
+                    "buy_link": buy_link,
+                    "handoff_recommended": True,
+                }
+            if gig_type == "irl":
+                next_step = (
+                    f"Receipt approved for {gig_name}! Next: post your review, then "
+                    "send it here in the chat."
+                )
+            else:
+                next_step = (
+                    f"Order approved for {gig_name}! Leave your review, then send "
+                    "the review screenshot here in the chat."
+                )
+            return {
+                "stage": "need_review",
+                "next_step": next_step,
+                "progress": progress,
+                "buy_link": buy_link,
+                "handoff_recommended": False,
+            }
+        # Outstanding is receipt-shaped (or unknown) despite an accepted receipt type —
+        # coach for another receipt artifact rather than inventing payout.
         return {
-            "stage": "paid",
+            "stage": "need_receipt",
             "next_step": (
-                f"Payout for {gig_name} has been issued. If you don't see it yet, "
-                "check your Dot payout link or ask me to loop in support."
+                f"For {gig_name}, send your remaining receipt proof right here "
+                "in the chat."
             ),
             "progress": progress,
             "buy_link": buy_link,
             "handoff_recommended": False,
         }
 
+    # No completion payload (unit tests / undetermined requirements): type heuristics.
+    if chat["review_approved"]:
+        return _payout_stage(
+            gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
+        )
+    if chat["review_needs_human"]:
+        return {
+            "stage": "review_review",
+            "next_step": (
+                f"Your review for {gig_name} is under review — "
+                "we'll notify you when it's approved."
+            ),
+            "progress": progress,
+            "buy_link": buy_link,
+            "handoff_recommended": False,
+        }
+    if chat["review_rejected"]:
+        return {
+            "stage": "review_rejected",
+            "next_step": (
+                f"Your review submission for {gig_name} needs support — "
+                "I'll loop in a human."
+            ),
+            "progress": progress,
+            "buy_link": buy_link,
+            "handoff_recommended": True,
+        }
+    if gig_type == "irl":
+        next_step = (
+            f"Receipt approved for {gig_name}! Next: post your review, then "
+            "send it here in the chat."
+        )
+    else:
+        next_step = (
+            f"Order approved for {gig_name}! Leave your review, then send "
+            "the review screenshot here in the chat."
+        )
     return {
-        "stage": "awaiting_payout",
-        "next_step": (
-            f"All proof for {gig_name} is approved — payout typically lands in "
-            "1–2 business days via Dot."
-        ),
+        "stage": "need_review",
+        "next_step": next_step,
         "progress": progress,
         "buy_link": buy_link,
         "handoff_recommended": False,
@@ -320,7 +399,7 @@ def _progress_for_crwd(
     user_id: str,
     crwd_id: Any,
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """Fetch purchase + proof rows for one gig."""
+    """Fetch purchase + Hermes proof rows for one gig."""
     id_values = _id_values(user_id)
     crwd_values = [crwd_id]
     if isinstance(crwd_id, str):
@@ -343,52 +422,27 @@ def _progress_for_crwd(
         .sort("purchasedAt", -1)
         .limit(5)
     )
-    store_orders = list(
-        db[_COLL_GIG_STORE_ORDERS]
+    # proof_submissions keys user_id / crwd_id as strings (store_proof path).
+    crwd_id_strs = list({str(v) for v in crwd_values if v is not None})
+    chat_proofs = list(
+        db[_COLL_PROOFS]
         .find(
-            {"user_id": {"$in": id_values}, "crwd_id": {"$in": crwd_values}},
             {
-                "receipt_file": 1, "receipt_files": 1, "isApproved": 1,
-                "rejectionReason": 1, "reviewedAt": 1,
+                "user_id": str(user_id).strip(),
+                "crwd_id": {"$in": crwd_id_strs},
+            },
+            {
+                "proof_type": 1, "status": 1, "is_gig_completed": 1,
+                "created_at": 1,
             },
             max_time_ms=_MAX_TIME_MS,
         )
-        .sort("reviewedAt", -1)
-        .limit(5)
-    )
-    product_reviews = list(
-        db[_COLL_GIG_PRODUCT_REVIEWS]
-        .find(
-            {"user_id": {"$in": id_values}, "crwd_id": {"$in": crwd_values}},
-            {
-                "review_link": 1, "ugc_post_link": 1, "isApproved": 1,
-                "rejectionReason": 1, "reviewedAt": 1,
-            },
-            max_time_ms=_MAX_TIME_MS,
-        )
-        .sort("reviewedAt", -1)
-        .limit(5)
-    )
-    order_receipt_reviews = list(
-        db[_COLL_ORDER_RECEIPT_REVIEWS]
-        .find(
-            {
-                "order_generated_by": {"$in": id_values},
-                "crwd_id": {"$in": crwd_values},
-            },
-            {
-                "type": 1, "order_receipt_file": 1, "review": 1, "review_file": 1,
-                "isOrderApproved": 1, "status": 1,
-            },
-            max_time_ms=_MAX_TIME_MS,
-        )
-        .limit(10)
+        .sort("created_at", -1)
+        .limit(50)
     )
     return {
         "purchases": purchases,
-        "store_orders": store_orders,
-        "product_reviews": product_reviews,
-        "order_receipt_reviews": order_receipt_reviews,
+        "chat_proofs": chat_proofs,
     }
 
 
@@ -471,12 +525,12 @@ def build_user_gig_status(
         if not gig:
             continue
         prog = _progress_for_crwd(user_id, gid)
+        completion = _gig_proof_completion(user_id, str(gid))
         stage_info = compute_gig_stage(
             m, gig,
             purchases=prog["purchases"],
-            store_orders=prog["store_orders"],
-            product_reviews=prog["product_reviews"],
-            order_receipt_reviews=prog["order_receipt_reviews"],
+            chat_proofs=prog["chat_proofs"],
+            proof_completion=completion,
         )
         products = _collect_buy_products(gig, prog["purchases"])
         items.append(attach_gig_url({
