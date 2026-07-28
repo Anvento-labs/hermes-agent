@@ -152,7 +152,7 @@ class TestCustomQueryGuardrails:
         cursor = MagicMock()
         coll.find.return_value = cursor
         cursor.limit.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"crwds": coll})):
             t.crwd_db_tool({
                 "action": "custom_query", "collection": "crwds", "operation": "find",
                 "limit": 9999,
@@ -167,7 +167,7 @@ class TestCustomQueryGuardrails:
         cursor.limit.return_value = [
             {"email": "a@b.com", "password": "hash", "emailOTP": "1"}
         ]
-        with patch.object(t, "_db", return_value=_fake_db({"users": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"users": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "custom_query", "collection": "users", "operation": "find",
                 "projection": {"email": 1, "password": 1},
@@ -194,7 +194,7 @@ class TestNewUserActions:
         coll.find.return_value = cursor
         cursor.sort.return_value = cursor
         cursor.limit.return_value = [{"product_name": "X", "product_url": "http://u"}]
-        with patch.object(t, "_db", return_value=_fake_db({"user_product_purchases": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"user_product_purchases": coll})):
             out = json.loads(t.crwd_db_tool({"action": "get_user_products", "user_id": "abc"}))
         assert out["_type"] == "user_products"
         assert out["items"][0]["product_name"] == "X"
@@ -216,7 +216,7 @@ class TestNewUserActions:
         }
         mock_purchases = MagicMock()
         mock_purchases.find.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({
+        with patch.object(t.connection, "_db", return_value=_fake_db({
             "crwds": mock_crwds,
             "user_product_purchases": mock_purchases,
         })):
@@ -246,7 +246,7 @@ class TestNewUserActions:
         cursor = MagicMock()
         coll.find.return_value = cursor
         cursor.limit.return_value = [{"title": "hi", "deviceToken": "d", "chat_token": "c"}]
-        with patch.object(t, "_db", return_value=_fake_db({"notifications": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"notifications": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "custom_query", "collection": "notifications", "operation": "find",
             }))
@@ -259,7 +259,7 @@ class TestEnrolledGigExclusion:
         enrolled_oid = t._oid("69e6a4d6cea992cbda22b381")
         coll = MagicMock()
         coll.find.return_value = [{"crwd_id": enrolled_oid}]
-        with patch.object(t, "_db", return_value=_fake_db({"added_crwd_members": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"added_crwd_members": coll})):
             enrolled = t._get_enrolled_gig_ids("69a6f191cb29b0b371b3a156")
         assert enrolled == {"69e6a4d6cea992cbda22b381"}
 
@@ -278,8 +278,8 @@ class TestEnrolledGigExclusion:
         cursor.limit.return_value = [
             {"_id": available_oid, "name": "New Gig", "gig_stores": []},
         ]
-        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
-             patch.object(t, "_db", return_value=_fake_db({
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({
                  "added_crwd_members": mock_members,
                  "crwds": mock_crwds,
              })):
@@ -305,8 +305,8 @@ class TestEnrolledGigExclusion:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = []
-        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
-             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({"action": "list_active_gigs"}))
         assert "excluded_enrolled_count" not in out
         assert out["has_more"] is False
@@ -322,7 +322,7 @@ class TestSpotsFullExclusion:
         full_oid = t._oid("69de702dd17560b078b2bc9a")
         mock_crwds = MagicMock()
         mock_crwds.aggregate.return_value = [{"_id": full_oid}]
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             oids = t._spots_full_gig_oids()
         assert oids == [full_oid]
         pipeline = mock_crwds.aggregate.call_args[0][0]
@@ -353,8 +353,8 @@ class TestSpotsFullExclusion:
         cursor.limit.return_value = [
             {"_id": open_oid, "name": "Open Gig", "gig_stores": []},
         ]
-        with patch.object(t, "_spots_full_gig_oids", return_value=[full_oid]), \
-             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[full_oid]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({"action": "list_active_gigs"}))
         assert len(out["items"]) == 1
         assert out["items"][0]["name"] == "Open Gig"
@@ -368,7 +368,7 @@ class TestSpotsFullExclusion:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         mock_crwds = MagicMock()
         mock_crwds.aggregate.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             assert t._spots_full_gig_oids() == []
         member_match = mock_crwds.aggregate.call_args[0][0][1]["$lookup"]["pipeline"][0]["$match"]
         assert member_match["isAccepted"] is True
@@ -378,7 +378,7 @@ class TestSpotsFullExclusion:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         mock_crwds = MagicMock()
         mock_crwds.aggregate.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             t._spots_full_gig_oids()
         member_match = mock_crwds.aggregate.call_args[0][0][1]["$lookup"]["pipeline"][0]["$match"]
         assert member_match["isAccepted"] is True
@@ -388,7 +388,7 @@ class TestSpotsFullExclusion:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         mock_crwds = MagicMock()
         mock_crwds.aggregate.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             t._spots_full_gig_oids()
         first_match = mock_crwds.aggregate.call_args[0][0][0]["$match"]
         assert first_match["number_of_people"] == {
@@ -408,8 +408,8 @@ class TestSpotsFullExclusion:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = []
-        with patch.object(t, "_spots_full_gig_oids", return_value=[full_oid]), \
-             patch.object(t, "_db", return_value=_fake_db({
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[full_oid]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({
                  "added_crwd_members": mock_members,
                  "crwds": mock_crwds,
              })):
@@ -436,8 +436,8 @@ class TestListActiveGigsPagination:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = [self._gig_doc(f"69b8614f1083b9302fd0a9{i:02x}", f"Gig {i}") for i in range(5)]
-        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
-             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({"action": "list_active_gigs", "limit": 5}))
         assert out["total"] == 12
         assert out["offset"] == 0
@@ -456,8 +456,8 @@ class TestListActiveGigsPagination:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = [self._gig_doc("69b8614f1083b9302fd0a9a7", "Gig 6")]
-        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
-             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({
                 "action": "list_active_gigs",
                 "limit": 5,
@@ -477,8 +477,8 @@ class TestListActiveGigsPagination:
         cursor.sort.return_value = cursor
         cursor.skip.return_value = cursor
         cursor.limit.return_value = [self._gig_doc("69b8614f1083b9302fd0a9a7", "Gig 10")]
-        with patch.object(t, "_spots_full_gig_oids", return_value=[]), \
-             patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({
                 "action": "list_active_gigs",
                 "limit": 5,
@@ -515,7 +515,7 @@ class TestWaitlistedGigs:
         mock_crwds.find.return_value = [
             {"_id": gig_oid, "name": "Waitlisted Gig", "gig_stores": []},
         ]
-        with patch.object(t, "_db", return_value=_fake_db({
+        with patch.object(t.connection, "_db", return_value=_fake_db({
             "added_crwd_members": mock_members,
             "crwds": mock_crwds,
         })):
@@ -540,7 +540,7 @@ class TestRouter:
 
     def test_unexpected_exception_generic_error(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
-        with patch.object(t, "_db", side_effect=Exception("driver boom")):
+        with patch.object(t.connection, "_db", side_effect=Exception("driver boom")):
             out = json.loads(t.crwd_db_tool({"action": "list_active_gigs"}))
         # Raw driver error must not leak to the model.
         assert out == {"error": "query failed"}
@@ -571,7 +571,7 @@ class TestUserGigHistory:
         ]
         mock_db = _fake_db({"added_crwd_members": mock_members})
         mock_db.list_collection_names.return_value = []
-        with patch.object(t, "_db", return_value=mock_db):
+        with patch.object(t.connection, "_db", return_value=mock_db):
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_gig_history",
                 "user_id": user_id,
@@ -594,7 +594,7 @@ class TestGigDetailsFull:
             "targeting_rules": [],
             "locations": [],
         }
-        with patch.object(t, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
             out = json.loads(t.crwd_db_tool({
                 "action": "get_gig_details",
                 "query": "Summer Gig",
@@ -714,7 +714,7 @@ class TestCheckDuplicateProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = None
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -728,7 +728,7 @@ class TestCheckDuplicateProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = _proof_doc()
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -743,7 +743,7 @@ class TestCheckDuplicateProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = _proof_doc()
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -758,7 +758,7 @@ class TestCheckDuplicateProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = None
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -770,7 +770,7 @@ class TestCheckDuplicateProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = _proof_doc()
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "2 6177 0190 0173 4723 7",
@@ -795,7 +795,7 @@ class TestCheckDuplicateProof:
         coll.find_one.return_value = _proof_doc(
             normalized_proof_id="tiktok:7311123", proof_type="ugc_link"
         )
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "https://www.tiktok.com/@other/video/7311123?is_from_webapp=1",
@@ -835,13 +835,13 @@ def _proofs_db(coll, users=None):
 
 class TestStoreProof:
     def setup_method(self):
-        t._proof_index_ready = False
+        t.proofs._proof_index_ready = False
 
     def test_valid_insert(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.insert_one.return_value.inserted_id = t._oid("69b8614f1083b9302fd0a9a7")
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             out = json.loads(t.crwd_db_tool(_store_args()))
         assert out["stored"] is True
         assert out["duplicate"] is False
@@ -855,7 +855,7 @@ class TestStoreProof:
     def test_accept_round_trips_its_reason(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args())
         doc = coll.insert_one.call_args[0][0]
         assert doc["status"] == "accepted"
@@ -871,7 +871,7 @@ class TestStoreProof:
         coll = MagicMock()
         coll.insert_one.side_effect = DuplicateKeyError("dup")
         coll.find_one.return_value = None
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             out = json.loads(t.crwd_db_tool(_store_args()))
         assert out["stored"] is False
         assert out["already_recorded"] is True
@@ -882,7 +882,7 @@ class TestStoreProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = _proof_doc()
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             out = json.loads(t.crwd_db_tool(_store_args(user_id="user-b", crwd_id="gig-1")))
         assert out["stored"] is False
         assert out["duplicate"] is True
@@ -930,7 +930,7 @@ class TestStoreProof:
     def test_ugc_link_stores_platform_post_id(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args(
                 proof_id="https://www.tiktok.com/@h/video/7311123?is_from_webapp=1",
                 proof_type="ugc_link",
@@ -941,7 +941,7 @@ class TestStoreProof:
     def test_review_screenshot_stores_gig_handle_date_key(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args(
                 proof_id="69deb0781ca6038a3a1f6f8a:sarah_k:July 15, 2026",
                 proof_type="review_screenshot",
@@ -956,7 +956,7 @@ class TestStoreProof:
         # receipt; it buys idempotency, not the fraud rule.
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args())
         call = coll.create_index.call_args_list[0]
         assert call[0][0] == [
@@ -969,7 +969,7 @@ class TestStoreProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.create_index.side_effect = Exception("no perms")
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             out = json.loads(t.crwd_db_tool(_store_args()))
         assert out["stored"] is True
 
@@ -984,7 +984,7 @@ class TestFindProof:
             _proof_doc(status="accepted"),
         ]
         coll.find.return_value = cursor
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "find_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -999,7 +999,7 @@ class TestFindProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find.return_value.sort.return_value.limit.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             t.crwd_db_tool({
                 "action": "find_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -1016,7 +1016,7 @@ class TestFindProof:
         cursor = MagicMock()
         cursor.sort.return_value.limit.return_value = []
         coll.find.return_value = cursor
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             t.crwd_db_tool({
                 "action": "find_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -1029,7 +1029,7 @@ class TestFindProof:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find.return_value.sort.return_value.limit.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "find_proof",
                 "proof_id": "REC# 2-6177-0190-0173-4723-7",
@@ -1067,7 +1067,7 @@ class TestProofWriteScope:
 
         db = MagicMock()
         db.__getitem__.side_effect = record
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             t.crwd_db_tool(_store_args())
         # users is read for the audit email; proof_submissions is the only write.
         assert set(touched) <= {"proof_submissions", "users"}
@@ -1079,7 +1079,7 @@ class TestProofWriteScope:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find.return_value.sort.return_value.limit.return_value = []
-        with patch.object(t, "_db", return_value=_fake_db({"receipt_upload_history": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"receipt_upload_history": coll})):
             t.crwd_db_tool({"action": "get_user_receipts", "user_id": "user-a"})
         assert coll.insert_one.called is False
         assert coll.update_one.called is False
@@ -1249,7 +1249,7 @@ class TestProofIdNamesAPurchaseNotASubmission:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = None  # the $nor filter excludes their own row
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "Order # 112-2229469-0480212",
@@ -1265,7 +1265,7 @@ class TestProofIdNamesAPurchaseNotASubmission:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = _proof_doc()  # user-a's accepted row
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "Order # 112-2229469-0480212",
@@ -1281,7 +1281,7 @@ class TestProofIdNamesAPurchaseNotASubmission:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = _proof_doc(crwd_id="gig-1")
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "Order # 112-2229469-0480212",
@@ -1298,7 +1298,7 @@ class TestProofIdNamesAPurchaseNotASubmission:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = _proof_doc()
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_duplicate_proof",
                 "proof_id": "Order # 112-2229469-0480212",
@@ -1321,7 +1321,7 @@ class TestReasonCodeIsClosed:
     def test_every_documented_code_is_accepted(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             for code in t._PROOF_REASON_CODES:
                 out = json.loads(t.crwd_db_tool(_store_args(
                     reason_code=code,
@@ -1333,7 +1333,7 @@ class TestReasonCodeIsClosed:
         # Two-purchase gigs: one receipt in hand is incomplete, not clean.
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             out = json.loads(t.crwd_db_tool(_store_args(
                 status="needs_human", reason_code="incomplete_submission",
                 reason="first of two receipts; second payment method outstanding",
@@ -1362,7 +1362,7 @@ class TestOrderScreenshotIsItsOwnArtifact:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = None
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             out = json.loads(t.crwd_db_tool(_store_args(
                 proof_type="order_screenshot", proof_id="Order # 112-2229469-0480212",
             )))
@@ -1411,7 +1411,7 @@ class TestGigProofCompletion:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         gig = _gig_with(requires_receipt=True, requires_order_id=True,
                         requires_store_address=True)
-        with patch.object(t, "_db", return_value=_completion_db(gig, ["receipt_amazon"])):
+        with patch.object(t.connection, "_db", return_value=_completion_db(gig, ["receipt_amazon"])):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
             }))
@@ -1422,7 +1422,7 @@ class TestGigProofCompletion:
     def test_outstanding_artifact_blocks_completion(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         gig = _gig_with(requires_receipt=True, requires_review_receipt=True)
-        with patch.object(t, "_db", return_value=_completion_db(gig, ["receipt_amazon"])):
+        with patch.object(t.connection, "_db", return_value=_completion_db(gig, ["receipt_amazon"])):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
             }))
@@ -1436,7 +1436,7 @@ class TestGigProofCompletion:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         for store in ("Target ", "Amazon", "Walmart"):
             gig = _gig_with(requires_review_link=True, store_name=store)
-            with patch.object(t, "_db", return_value=_completion_db(gig, ["review_screenshot"])):
+            with patch.object(t.connection, "_db", return_value=_completion_db(gig, ["review_screenshot"])):
                 out = json.loads(t.crwd_db_tool({
                     "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
                 }))
@@ -1445,7 +1445,7 @@ class TestGigProofCompletion:
 
     def test_gig_with_no_artifact_requirements_is_not_asserted_complete(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
-        with patch.object(t, "_db", return_value=_completion_db(_gig_with(), [])):
+        with patch.object(t.connection, "_db", return_value=_completion_db(_gig_with(), [])):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
             }))
@@ -1469,7 +1469,7 @@ class TestIsGigCompletedFlag:
         db = _completion_db(gig, [])
         proofs = db["proof_submissions"]
         proofs.find_one.return_value = None
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool(_store_args(
                 proof_id="Order # 112-2229469-0480212",
                 proof_type="receipt_amazon", crwd_id="g", user_id="u")))
@@ -1482,7 +1482,7 @@ class TestIsGigCompletedFlag:
         db = _completion_db(gig, ["receipt_amazon"])  # receipt already accepted
         proofs = db["proof_submissions"]
         proofs.find_one.return_value = None
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool(_store_args(
                 proof_id="69b8614f1083b9302fd0a9a7:sarah_k:July 15, 2026",
                 proof_type="review_screenshot",
@@ -1495,7 +1495,7 @@ class TestIsGigCompletedFlag:
         gig = _gig_with(requires_receipt=True)
         db = _completion_db(gig, [])
         db["proof_submissions"].find_one.return_value = None
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool(_store_args(
                 status="rejected", reason_code="wrong_product",
                 reason="not on the catalog", crwd_id="g", user_id="u")))
@@ -1506,7 +1506,7 @@ class TestIsGigCompletedFlag:
         gig = _gig_with(requires_receipt=True, requires_review_receipt=True)
         db = _completion_db(gig, [])
         db["proof_submissions"].find_one.return_value = None
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool(_store_args(
                 proof_id="Order # 112-2229469-0480212",
                 proof_type="receipt_amazon", crwd_id="g", user_id="u",
@@ -1528,7 +1528,7 @@ class TestReviewLinkFlagTakesAScreenshotAtEveryStore:
 
     def _complete_with_screenshot(self, store_name):
         gig = _gig_with(requires_review_link=True, store_name=store_name)
-        with patch.object(t, "_db", return_value=_completion_db(gig, ["review_screenshot"])):
+        with patch.object(t.connection, "_db", return_value=_completion_db(gig, ["review_screenshot"])):
             return json.loads(t.crwd_db_tool({
                 "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
             }))
@@ -1572,7 +1572,7 @@ class TestMultiStoreGigsAreALatentRisk:
                 {"store_name": "Amazon", "requires_ugc_post": True},
             ],
         }
-        with patch.object(t, "_db", return_value=_completion_db(gig, ["receipt_target"])):
+        with patch.object(t.connection, "_db", return_value=_completion_db(gig, ["receipt_target"])):
             out = json.loads(t.crwd_db_tool({
                 "action": "check_gig_proof_completion", "user_id": "u", "crwd_id": "g",
             }))
@@ -1645,7 +1645,7 @@ class TestAcceptedProofNeedsEvidence:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = None
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             out = json.loads(t.crwd_db_tool(_store_args(
                 source_url="", proof_link="https://amazon.com/gp/customer-reviews/RABC")))
         assert out["stored"] is True
@@ -1655,7 +1655,7 @@ class TestAcceptedProofNeedsEvidence:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = None
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             for status, code in (("rejected", "unreadable"), ("needs_human", "no_identifier")):
                 out = json.loads(t.crwd_db_tool(_store_args(
                     status=status, reason_code=code, reason="could not read it",
@@ -1675,7 +1675,7 @@ class TestProofInfoAndProductFields:
             "line_items": [{"product_name": "SMOOTH LGND DEODORNT", "quantity": 1,
                             "price": 15.99, "amount": 15.99}],
         }
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args(
                 proof_info=info, product_name="Smooth Legend Deodorant",
                 store_name="Target "))
@@ -1692,7 +1692,7 @@ class TestProofInfoAndProductFields:
         coll.find_one.return_value = None
         info = {"platform": "tiktok", "handle": "@alice", "posted_at": "2026-07-02",
                 "likes": 120, "comments": 8, "views": 3400, "caption": "love these"}
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args(
                 proof_id="https://www.tiktok.com/@alice/video/7311123",
                 proof_type="ugc_link", proof_link="https://www.tiktok.com/@alice/video/7311123",
@@ -1703,7 +1703,7 @@ class TestProofInfoAndProductFields:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.find_one.return_value = None
-        with patch.object(t, "_db", return_value=_proofs_db(coll)):
+        with patch.object(t.connection, "_db", return_value=_proofs_db(coll)):
             t.crwd_db_tool(_store_args())
         assert coll.insert_one.call_args[0][0]["risk_scored"] is False
 
@@ -1716,7 +1716,7 @@ class TestMarkProofRiskScored:
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
         coll.update_one.return_value = MagicMock(matched_count=1)
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "mark_proof_risk_scored",
                 "proof_record_id": "69b8614f1083b9302fd0a9a7",
@@ -1737,7 +1737,7 @@ class TestMarkProofRiskScored:
         coll = MagicMock()
         coll.update_one.return_value = MagicMock(matched_count=0)
         coll.count_documents.return_value = 1  # the record exists, just already marked
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "mark_proof_risk_scored",
                 "proof_record_id": "69b8614f1083b9302fd0a9a7",
@@ -1756,7 +1756,7 @@ class TestMarkProofRiskScored:
         coll = MagicMock()
         coll.update_one.return_value = MagicMock(matched_count=0)
         coll.count_documents.return_value = 0  # no such record at all
-        with patch.object(t, "_db", return_value=_fake_db({"proof_submissions": coll})):
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
             out = json.loads(t.crwd_db_tool({
                 "action": "mark_proof_risk_scored",
                 "proof_record_id": "69b8614f1083b9302fd0a9a7"}))
@@ -1777,7 +1777,7 @@ class TestGetUserProofs:
     def test_returns_everything_for_a_member(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll, db = self._db_with([_proof_doc(), _proof_doc(status="rejected")])
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_proofs", "user_id": "user-a"}))
         assert out["_type"] == "crwd_user_proofs"
@@ -1788,7 +1788,7 @@ class TestGetUserProofs:
     def test_narrows_to_one_gig(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll, db = self._db_with([_proof_doc()])
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             t.crwd_db_tool({
                 "action": "get_user_proofs", "user_id": "user-a", "crwd_id": "gig-1"})
         assert coll.find.call_args[0][0] == {"user_id": "user-a", "crwd_id": "gig-1"}
@@ -1796,7 +1796,7 @@ class TestGetUserProofs:
     def test_gig_id_is_accepted_as_an_alias(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll, db = self._db_with([])
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             t.crwd_db_tool({
                 "action": "get_user_proofs", "user_id": "user-a", "gig_id": "gig-1"})
         assert coll.find.call_args[0][0]["crwd_id"] == "gig-1"
@@ -1804,7 +1804,7 @@ class TestGetUserProofs:
     def test_status_filter(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll, db = self._db_with([_proof_doc()])
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             t.crwd_db_tool({
                 "action": "get_user_proofs", "user_id": "user-a", "status": "accepted"})
         assert coll.find.call_args[0][0]["status"] == "accepted"
@@ -1812,7 +1812,7 @@ class TestGetUserProofs:
     def test_newest_first_and_capped(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll, db = self._db_with([])
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             t.crwd_db_tool({
                 "action": "get_user_proofs", "user_id": "user-a", "limit": 500})
         coll.find.return_value.sort.assert_called_with("created_at", -1)
@@ -1821,7 +1821,7 @@ class TestGetUserProofs:
     def test_no_proofs_is_an_honest_empty_not_an_error(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll, db = self._db_with([])
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_proofs", "user_id": "user-a"}))
         assert out["items"] == [] and out["count"] == 0 and out["error"] is None
@@ -1874,7 +1874,7 @@ class TestArchivedGigsAreInvisible:
             "gig_product_reviews": empty, "order_receipt_reviews": empty,
         })
         db.list_collection_names = MagicMock(return_value=[])
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_gig_status", "user_id": "user-a"}))
         assert out["count"] == 1
@@ -1890,7 +1890,7 @@ class TestArchivedGigsAreInvisible:
         crwds = MagicMock()
         crwds.find.return_value = []  # its gig is archived -> excluded by the join
         db = _fake_db({"added_crwd_members": members, "crwds": crwds})
-        with patch.object(t, "_db", return_value=db):
+        with patch.object(t.connection, "_db", return_value=db):
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_gigs", "user_id": "user-a"}))
         assert out["items"] == []

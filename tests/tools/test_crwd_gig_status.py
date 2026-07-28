@@ -217,7 +217,7 @@ class TestBuildUserGigStatus:
         oc.limit.return_value = []
 
         with patch.object(
-            t,
+            t.connection,
             "_db",
             return_value={
                 "added_crwd_members": mock_members,
@@ -264,10 +264,10 @@ class TestBuildUserGigStatus:
         }
 
         with patch.object(
-            t,
+            t.connection,
             "_db",
             return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
-        ), patch.object(t, "_progress_for_crwd", return_value=empty_progress):
+        ), patch.object(t.stage, "_progress_for_crwd", return_value=empty_progress):
             out = t.build_user_gig_status(user_id)
 
         assert [row["gig_name"] for row in out["items"]] == ["Soon", "Mid", "Far"]
@@ -304,10 +304,10 @@ class TestBuildUserGigStatus:
         }
 
         with patch.object(
-            t,
+            t.connection,
             "_db",
             return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
-        ), patch.object(t, "_progress_for_crwd", return_value=empty_progress):
+        ), patch.object(t.stage, "_progress_for_crwd", return_value=empty_progress):
             out = t.build_user_gig_status(user_id)
 
         assert len(out["items"]) == 8
@@ -351,7 +351,7 @@ class TestGetUserGigStatusAction:
     def test_router_action(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         with patch.object(
-            t,
+            t.stage,
             "build_user_gig_status",
             return_value={"_type": "user_gig_status", "items": [], "error": None},
         ):
@@ -368,7 +368,7 @@ class TestGetUserGigStatusAction:
         mock_crwds = MagicMock()
         mock_crwds.find.return_value = []
         with patch.object(
-            t,
+            t.connection,
             "_db",
             return_value={"added_crwd_members": mock_members, "crwds": mock_crwds},
         ):
