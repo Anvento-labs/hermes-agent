@@ -174,6 +174,52 @@ class TestCustomQueryGuardrails:
             }))
         assert out["items"] == [{"email": "a@b.com"}]
 
+    def test_user_fields_include_location(self):
+        for key in ("city", "state", "country", "postal_code"):
+            assert t._USER_FIELDS.get(key) == 1
+        assert "address" not in t._USER_FIELDS
+
+    def test_get_user_returns_postal_code(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll = MagicMock()
+        coll.find_one.return_value = {
+            "_id": "abc",
+            "city": "Austin",
+            "state": "TX",
+            "country": "US",
+            "postal_code": "78701",
+        }
+        with patch.object(t.connection, "_db", return_value=_fake_db({"users": coll})):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user", "identifier": "abc",
+            }))
+        assert out["items"][0]["postal_code"] == "78701"
+        assert out["items"][0]["city"] == "Austin"
+        # Projection must request postal_code (not whole-doc).
+        proj = coll.find_one.call_args.args[1]
+        assert proj.get("postal_code") == 1
+        assert proj.get("city") == 1
+        assert "address" not in proj
+
+    def test_fetch_user_profile_includes_location(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        with patch("tools.crwd_db.prefetch._get_user", return_value=json.dumps({
+            "_type": "user",
+            "items": [{
+                "_id": "abc",
+                "city": "Austin",
+                "state": "TX",
+                "country": "US",
+                "postal_code": "78701",
+            }],
+            "error": None,
+        })):
+            out = t.fetch_user_profile("abc")
+        assert out["success"] is True
+        assert out["user"]["postal_code"] == "78701"
+        assert out["user"]["city"] == "Austin"
+        assert "address" not in out["user"]
+
 
 class TestNewUserActions:
     @pytest.mark.parametrize("action", [

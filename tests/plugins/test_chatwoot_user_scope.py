@@ -191,7 +191,9 @@ class TestWebhookHint:
             g.assert_not_called()
 
     def test_hook_sets_cross_user_flag_for_foreign_user_id(self, chatwoot_session):
-        with patch.object(cc, "resolve_member_crwd_id", return_value="6a33bb6003b1c0cc31a7baa5"):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="6a33bb6003b1c0cc31a7baa5"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ):
             out = cc.member_context_hook(
                 platform="chatwoot",
                 sender_id="55",
@@ -205,7 +207,9 @@ class TestWebhookHint:
         assert "I can only provide you with your information" in out["context"]
 
     def test_hook_does_not_flag_gig_id_only_message(self, chatwoot_session):
-        with patch.object(cc, "resolve_member_crwd_id", return_value="6a33bb6003b1c0cc31a7baa5"):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="6a33bb6003b1c0cc31a7baa5"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ):
             out = cc.member_context_hook(
                 platform="chatwoot",
                 sender_id="55",
@@ -216,7 +220,9 @@ class TestWebhookHint:
         assert "another member's account" not in out["context"]
 
     def test_hook_context_forbids_cross_user_lookup(self, chatwoot_session):
-        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ):
             out = cc.member_context_hook(platform="chatwoot", sender_id="55")
         assert out is not None
         assert "abc123" in out["context"]

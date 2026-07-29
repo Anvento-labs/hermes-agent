@@ -1,10 +1,10 @@
 ---
 name: crwd-gig-discovery
-description: "Help a CRWD member find and understand gigs — what's available now, gig details (payout, deadline, product links, store), applying, approval status, and where to go for a live gig (nearest Walmart/Target, address, hours). Use when a member asks what gigs are open, about a specific gig, how to apply, whether they're approved, or where the store is."
-version: 2.0.0
+description: "Coach a CRWD member on assigned gigs (status, next step) and find open gigs to join — details, apply, approval, and store location for live gigs. Use when they ask what to do, help with gigs, what's available, what they have, about a specific gig, or where the store is."
+version: 2.1.1
 metadata:
   hermes:
-    tags: [crwd, gigs, campaigns, browse, apply, approval, payout, deadline, store, walmart, target, location, nearest, hours, stock]
+    tags: [crwd, gigs, campaigns, coach, browse, apply, approval, payout, deadline, store, walmart, target, location, nearest, hours, stock]
     related_skills: [crwd-gig-execution, crwd-application-expert, crwd-reminders-followups, crwd-reference]
     requires_toolsets: [crwd, web]
     config:
@@ -16,14 +16,18 @@ metadata:
 
 # CRWD Gig Discovery
 
-Find gigs and explain them against the member's **real** data — not in the abstract.
+Coach the member against their **real** data: help with **assigned / in-progress**
+gigs (status + next step; hand off how-to to `crwd-gig-execution`), and **find open
+gigs** they can join. Members often still want new gigs while an online or long gig
+is in progress — support both.
 
 ## When to Use
 
-- "What gigs are available?" / "Any new gigs?"
+- "What should I do?" / "Help with my gigs" / "Anything for me?"
+- "What gigs are available?" / "Any new gigs?" / "Any new gigs while I wait?"
 - "Tell me about the [X] gig" — payout, deadline, store, what's involved
 - "How do I apply?" / "Am I approved yet?"
-- "What gigs do I have?"
+- "What gigs do I have?" / "What are my active gigs?"
 - "What are my waitlisted gigs?" / "What gigs are pending approval?"
 - "What gigs have I done before?" / "My gig history"
 - "Where do I go for this gig?" / "Where's the nearest Walmart/Target?"
@@ -31,12 +35,29 @@ Find gigs and explain them against the member's **real** data — not in the abs
 
 ## Procedure
 
-Clear asks already map via the steps below (available → `list_active_gigs`, in-progress →
-`get_user_gigs` / `get_user_gig_status`, pending → `get_waitlisted_gigs`, etc.). **Only when**
-the message could mean either **enrolled/applied** or **open/unenrolled** gigs, call
-`clarify` first with choices like `["Ones I'm already in", "Open gigs I can join"]`, then
-use the matching `crwd_db` action. Do not list both scopes in one turn. After a clear answer,
-optionally offer one engaging follow-up (next step, or a reminder via `crwd-reminders-followups`).
+Route by intent — keep Home vs Explore **labeled**, not forever exclusive:
+
+- **Clear assigned / my gigs** ("what am I in?", "my active gigs", "pending approval",
+  "my history") → assigned tools only (steps 3–5). Do not mix open Explore gigs into
+  a pure Home answer.
+- **Clear open / available** ("what's available?", "new gigs", "explore") →
+  `list_active_gigs` only (step 1). Never treat enrolled gigs as "available."
+- **Coach / vague help** ("help with gigs", "what should I do?", "anything for me?")
+  → **one turn, two labeled sections** (same turn is OK):
+  1. **Your gigs** — `get_user_gig_status` with `user_id` (use `include_waitlisted=true`
+     when pending apps may matter). For each gig, paste the clickable title and quote
+     that gig's `next_step`. For buy / UGC / proof how-to, hand off to
+     `crwd-gig-execution` — this skill stays light on execution.
+  2. **Open gigs you can join** — `list_active_gigs` with `user_id`; show the page
+     (payout, deadline, products). Offer "show more" via `next_offset` when
+     `has_more` is true.
+- **`clarify` only for a pure list ask** that is still ambiguous between Home and
+  Explore (e.g. bare "what gigs?" with no coach framing), with choices like
+  `["Ones I'm already in", "Open gigs I can join"]`. Do **not** clarify away a
+  coach turn — use the two-section reply instead.
+
+After a clear answer, optionally offer one engaging follow-up (next step, or a
+reminder via `crwd-reminders-followups`).
 
 1. **Available gigs to apply for:** `crwd_db` action `list_active_gigs` **with `user_id`**
    from the `[CRWD member]` context line. Returns open gigs sorted by soonest end date,
@@ -45,7 +66,8 @@ optionally offer one engaging follow-up (next step, or a reminder via `crwd-remi
    page) — the response includes `has_more`, `total`, and `next_offset`.
    When the member asks to see more ("show me more", "any others?"), call again with
    `offset = next_offset` from the previous response (same `user_id`). Only say "that's
-   the full list" when `has_more` is false.
+   the full list" when `has_more` is false. Do **not** ask preference / interest
+   questions before listing — just show open gigs.
 2. **A specific gig by name/text:** `get_gig_details` (fuzzy-matches, returns ranked
    candidates with an `_id`). **Confirm the right `_id`** before you quote details or use it
    elsewhere — if two candidates are close, ask which one they mean.
@@ -65,12 +87,20 @@ optionally offer one engaging follow-up (next step, or a reminder via `crwd-remi
 5. **Past participation / history:** `get_user_gig_history` with `user_id`. Returns prior
    membership rows (including completed, rejected, or deleted gigs). Use for "what gigs have
    I done before?" — not `get_user_gigs` (in-progress only) or `list_active_gigs`.
-6. **Paste linked `name` / `gig_name` verbatim — the title IS the clickable link.**
-   Every `crwd_db` action returns `name` / `gig_name` already as markdown
-   `[Title](…/my-gigs/<_id>)`. Copy that field as-is into the reply. Do **not**
-   write `Title — url` or append a bare URL after the name. Do not invent
-   `/explore/` links. On "show more", call `list_active_gigs` with `next_offset`
-   and use the fresh linked `name` — don't paraphrase titles from memory.
+6. **Every gig name must be a clickable markdown title — fail-closed.**
+   - Prefer the tool's already-linked `name` / `gig_name` (must look like
+     `[Title](…/my-gigs/<_id>)`). Paste that field **verbatim** into the reply.
+   - Nested payloads (`get_user_gigs` / `get_waitlisted_gigs`): use `gig.name` (linked),
+     not a freehand title.
+   - If `name` / `gig_name` is plain text but `gig_url` is present, render
+     `[plain](gig_url)` yourself — never send a bare title.
+   - Never use `name_plain` / `gig_name_plain` alone in the member-facing reply.
+   - Never write `Title — url`, append a bare URL after the name, paraphrase from
+     chat memory, or invent `/explore/` links. On "show more", use fresh linked
+     `name` from the new `list_active_gigs` page.
+   - If the payload has no `gig_url` and the name stays plain, `CRWD_APP_BASE_URL` /
+     `crwd.app_base_url` is likely unset — say you can't deep-link rather than
+     inventing a URL. Still never ship a clickable-looking fake link.
    Full detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
 7. **Include every product name + buy link.** `list_active_gigs` / `get_gig_details`
    return `stores[].products[]` with `name` + `product_url`. `get_user_gig_status`
@@ -100,10 +130,14 @@ optionally offer one engaging follow-up (next step, or a reminder via `crwd-remi
      `irl` — don't reframe an online gig as an in-store trip.
    For a live (`irl`) gig, help them get to the store. Surface the store info by default when
    you describe it.
-   - **Never assume the member's location.** If you don't already know their city/ZIP (from
-     the conversation or profile), **ask first** — one short question:
-     *"What city or ZIP are you in? I'll find the closest one."* Don't guess or pick a random
-     store.
+   - **Member location is CRWD-DB only — never Honcho / memory / guesswork.** Prefer the
+     `[CRWD member]` context line's profile location when present. Otherwise call
+     `crwd_db` `get_user` with `identifier` = the authenticated `user_id` and use
+     `city` / `state` / `country` / `postal_code` from that payload. Do **not** use a
+     city or ZIP from Honcho, session memory, another member, or a prior chat —
+     those are often wrong (e.g. a test persona's Sacramento leaked across users).
+   - If `city` and `postal_code` are both empty in DB/context, **ask once** —
+     *"What city or ZIP are you in? I'll find the closest one."* Never invent a city.
    - Once you have their location, find the specific store with `web_search` (and
      `web_extract` on the store page if needed), e.g. *"Walmart near 90210 hours phone
      number"*. Give them, tightly: **store name + full address**, **phone / store number**,
@@ -115,7 +149,7 @@ optionally offer one engaging follow-up (next step, or a reminder via `crwd-remi
    **get approved** → perform → submit proof → get paid. Call `get_user_gig_status` when
    you need each gig's `next_step` — quote that instead of generic lifecycle advice. If
    they're waiting on approval, say that; if approved, point them at what to do next
-   (`crwd-gig-execution`).
+   (`crwd-gig-execution` for buy / content / proof how-to).
 10. Be precise on **payout, deadline, and estimated time** — quote the real numbers; never guess.
 11. Offer a deadline reminder if the gig is time-sensitive (see `crwd-reminders-followups`).
 
@@ -129,9 +163,10 @@ For the deeper lifecycle detail, load
   reuse a previous message's `get_user_gigs` / `get_user_gig_status` /
   `get_waitlisted_gigs` output to answer "what gigs am I in / part of / enrolled in?" —
   always fetch again before listing.
-- **Do not combine `list_active_gigs` and `get_user_gigs` when answering availability**
-  questions — enrolled gigs belong on Home, not Explore. Use step 1 alone for "what's
-  available?" and step 4 alone for "what active gigs do I have?"
+- **Do not mix enrolled into a pure availability answer** — use step 1 alone for
+  "what's available?" and steps 3–4 alone for "what active / pending gigs do I have?"
+  Coach / vague asks **may** use both in one turn as two **labeled** sections
+  (Your gigs → Open gigs); never dump enrolled rows into an unlabeled Explore list.
 - **Pending approval** → step 3 (`get_waitlisted_gigs`) only — `isAccepted: false`. Do not use
   `get_user_gigs` or `list_active_gigs` for those questions.
 - Always pass `user_id` to `list_active_gigs` when the member asks about available or new
@@ -153,27 +188,37 @@ For the deeper lifecycle detail, load
   `stores[].store_name` of `Amazon`/`Target`/`Walmart` on a non-`irl` gig is just where the
   product is bought online, not a place to visit. Never offer "find your nearest <store>" for
   an online gig, even if the member prefers in-store. Only `irl` gigs carry a `location`.
-- **Store locating:** never invent a store, address, or phone number; if a bare ZIP matches
-  several stores, give the top match and note there are others. Hours online can be stale
-  (say "confirm by phone" for "open now?"), and you can't see live inventory (say "call to
-  confirm," never "it's in stock"). Keep store replies to name + address + phone + hours.
-- **Gig links:** paste linked `name` / `gig_name` from `crwd_db` verbatim
-  (`[Title](…/my-gigs/<id>)`). Never append a separate bare URL, never rebuild
-  `/explore/` links, and never replace the markdown with only `name_plain`.
+- **Store locating:** never invent a store, address, or phone number; never invent the
+  member's city/ZIP either — use `get_user` / the `[CRWD member]` profile location, not
+  Honcho. If a bare ZIP matches several stores, give the top match and note there are
+  others. Hours online can be stale (say "confirm by phone" for "open now?"), and you
+  can't see live inventory (say "call to confirm," never "it's in stock"). Keep store
+  replies to name + address + phone + hours.
+- **Gig name href is mandatory.** Every gig named in the reply must be a clickable
+  `[Title](…/my-gigs/<id>)`. Prefer verbatim linked `name` / `gig_name` / `gig.name`;
+  if plain + `gig_url`, build `[plain](gig_url)`. Never use `name_plain` alone, never
+  paraphrase from memory, never append a separate bare URL, never rebuild `/explore/`
+  links. If `gig_url` is missing and the name is plain, do not invent a link —
+  `CRWD_APP_BASE_URL` / `crwd.app_base_url` may be unset.
 
 ## Verification
 
 - Details you gave (payout, deadline, store) came from `crwd_db`, not assumption.
 - Product name + real buy link were included when the gig has a product — proactively, not
   only when asked.
-- For a live gig, you gave the store info or asked for the member's location before searching,
+- For a live gig, store search used the member's CRWD profile city/ZIP (context or
+  `get_user`), or you asked when those fields were empty — never a memory/Honcho city —
   and the store reply had a real name, address, phone/store number, and hours.
 - You did **not** offer to find a physical store for a non-`irl` (online) gig, regardless of
   its `stores[].store_name` or the member's in-store preference.
 - Available-gig answers excluded gigs the member is already in (`user_id` on
   `list_active_gigs`).
+- Coach / vague asks used two labeled sections when both scopes were useful; pure
+  availability answers did not mix in enrolled gigs.
 - "Show me more" used `next_offset` from the prior page when more gigs existed.
 - You confirmed the specific gig `_id` when there was any ambiguity.
-- The member knows their current step in the flow and what to do next.
-- Every gig named used the verbatim linked `name` / `gig_name` from `crwd_db`
-  (clickable title), with no trailing bare URL.
+- The member knows their current step in the flow and what to do next (quoted
+  `next_step` where relevant; how-to pointed at `crwd-gig-execution`).
+- **Every gig named in the reply has a clickable markdown title.** If any gig would
+  have been plain text, you fixed it (verbatim linked field or `[plain](gig_url)`)
+  before sending — no trailing bare URL, no `name_plain`-only titles.

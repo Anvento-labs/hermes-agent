@@ -128,6 +128,12 @@ def test_build_peer_card_and_conclusions():
     ]
 
 
+def test_build_peer_card_includes_postal_code():
+    user = dict(SAMPLE_USER, postal_code="21701")
+    card = en.build_peer_card(user, [], [])
+    assert "Location: Frederick, Maryland, 21701, US" in card
+
+
 # --- matcher query ordering -------------------------------------------------
 
 def test_match_queries_email_first_then_phone():
