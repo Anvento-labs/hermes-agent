@@ -77,6 +77,7 @@ def fetch_user_profile(user_id: str) -> Dict[str, Any]:
             "city": user.get("city"),
             "state": user.get("state"),
             "country": user.get("country"),
+            "postal_code": user.get("postal_code"),
         },
     }
 

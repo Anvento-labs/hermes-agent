@@ -69,9 +69,56 @@ class TestResolve:
         assert cc.resolve_member_crwd_id("") is None
 
 
+class TestLocationHelpers:
+    def test_format_profile_location_order(self):
+        assert cc._format_profile_location({
+            "city": "Austin",
+            "state": "TX",
+            "postal_code": "78701",
+            "country": "US",
+        }) == "Austin, TX, 78701, US"
+
+    def test_fetch_member_location_maps_profile(self, chatwoot_env):
+        with patch(
+            "tools.crwd_db_tool.fetch_user_profile",
+            return_value={
+                "success": True,
+                "user": {
+                    "city": "Austin",
+                    "state": "TX",
+                    "postal_code": "78701",
+                    "country": "US",
+                    "email": "a@b.com",
+                },
+            },
+        ):
+            loc = cc._fetch_member_location("abc123")
+        assert loc == {
+            "city": "Austin",
+            "state": "TX",
+            "country": "US",
+            "postal_code": "78701",
+        }
+        # Cached — second call does not re-hit the profile helper.
+        with patch(
+            "tools.crwd_db_tool.fetch_user_profile",
+            side_effect=AssertionError("should use cache"),
+        ):
+            assert cc._fetch_member_location("abc123") == loc
+
+    def test_fetch_member_location_empty_when_no_fields(self, chatwoot_env):
+        with patch(
+            "tools.crwd_db_tool.fetch_user_profile",
+            return_value={"success": True, "user": {"email": "a@b.com"}},
+        ):
+            assert cc._fetch_member_location("abc123") == {}
+
+
 class TestHook:
     def test_injects_context_when_resolved(self, chatwoot_env):
-        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ):
             out = cc.member_context_hook(platform="chatwoot", sender_id="55")
         assert out is not None
         assert "abc123" in out["context"]
@@ -86,6 +133,32 @@ class TestHook:
         assert "AMBIGUOUS" not in out["context"]
         assert "MUST" not in out["context"]
         assert "mandatory" not in out["context"].lower()
+
+    def test_injects_profile_location_when_present(self, chatwoot_env):
+        loc = {
+            "city": "Austin",
+            "state": "TX",
+            "postal_code": "78701",
+            "country": "US",
+        }
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=loc
+        ):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert "Profile location" in out["context"]
+        assert "Austin, TX, 78701, US" in out["context"]
+        assert "ignore Honcho" in out["context"]
+        assert "Sacramento" not in out["context"]
+
+    def test_injects_ask_when_profile_has_no_location(self, chatwoot_env):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value={}
+        ):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert "no city/ZIP on file" in out["context"]
+        assert "Do not guess from Honcho" in out["context"]
 
     def test_none_off_chatwoot(self, chatwoot_env):
         with patch.object(cc, "_is_chatwoot", return_value=False):

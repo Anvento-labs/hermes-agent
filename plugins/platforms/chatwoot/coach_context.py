@@ -1,9 +1,10 @@
 """CRWD Coach context: surface the member's CRWD ``users._id`` to the agent.
 
-On each turn, inject a short context line naming the current Chatwoot member's
-CRWD user id so the coach can call ``crwd_db`` ``get_user_gigs`` /
-``get_user_receipts`` / ``get_user_products`` **directly** — no ``get_user``
-round-trip, and no reliance on the member's email/phone reaching the prompt.
+On each turn, inject a short context block naming the current Chatwoot member's
+CRWD user id (and profile location when present) so the coach can call
+``crwd_db`` ``get_user_gigs`` / ``get_user_receipts`` / ``get_user_products``
+**directly** — no ``get_user`` round-trip for identity, and no reliance on
+Honcho/memory for city/ZIP (those can be wrong or leak across peers).
 
 Resolution is **synchronous and self-contained** (``pre_llm_call`` hooks run
 sync, like app-chatbot's ``_prefetch_context``), mirroring the ``crwd_handoff``
@@ -17,6 +18,8 @@ tool's direct-Chatwoot-API style:
      ``enrichment.fetch_user`` — enrichment is fire-and-forget, so the attribute
      may not be populated on the very first message.
   4. Cache the result per contact id (short TTL) to keep it to one lookup.
+  5. Best-effort profile location (city/state/country/postal_code) via
+     ``fetch_user_profile``, also cached, injected as authoritative.
 
 Best-effort throughout: any failure returns ``None`` and the coach falls back to
 today's ``get_user`` path.
@@ -119,6 +122,8 @@ _CACHE_TTL_S = 600.0
 _CACHE_MAX = 2048
 # contact_id -> (crwd_user_id_or_None, monotonic_ts)
 _cache: "OrderedDict[str, Tuple[Optional[str], float]]" = OrderedDict()
+# crwd_user_id -> (location_dict_or_None, monotonic_ts)
+_location_cache: "OrderedDict[str, Tuple[Optional[Dict[str, str]], float]]" = OrderedDict()
 
 
 # --- Chatwoot creds / platform gate -----------------------------------------
@@ -185,6 +190,66 @@ def _cache_put(contact_id: str, value: Optional[str]) -> None:
 def _reset_cache() -> None:
     """Test helper — clear the per-contact cache."""
     _cache.clear()
+    _location_cache.clear()
+
+
+def _location_cache_get(crwd_id: str) -> Tuple[bool, Optional[Dict[str, str]]]:
+    entry = _location_cache.get(crwd_id)
+    if entry is None:
+        return False, None
+    value, ts = entry
+    if (time.monotonic() - ts) > _CACHE_TTL_S:
+        _location_cache.pop(crwd_id, None)
+        return False, None
+    _location_cache.move_to_end(crwd_id)
+    return True, value
+
+
+def _location_cache_put(crwd_id: str, value: Optional[Dict[str, str]]) -> None:
+    _location_cache[crwd_id] = (value, time.monotonic())
+    _location_cache.move_to_end(crwd_id)
+    while len(_location_cache) > _CACHE_MAX:
+        _location_cache.popitem(last=False)
+
+
+def _fetch_member_location(crwd_id: str) -> Optional[Dict[str, str]]:
+    """Load city/state/country/postal_code for ``crwd_id`` from CRWD Mongo.
+
+    Returns a dict of non-empty fields, an empty dict when the user exists but
+    has no location on file, or ``None`` on lookup failure.
+    """
+    crwd_id = str(crwd_id or "").strip()
+    if not crwd_id:
+        return None
+    hit, cached = _location_cache_get(crwd_id)
+    if hit:
+        return cached
+    result: Optional[Dict[str, str]] = None
+    try:
+        from tools.crwd_db_tool import fetch_user_profile
+
+        profile = fetch_user_profile(crwd_id)
+        if profile.get("success") and isinstance(profile.get("user"), dict):
+            user = profile["user"]
+            loc: Dict[str, str] = {}
+            for key in ("city", "state", "country", "postal_code"):
+                val = str(user.get(key) or "").strip()
+                if val:
+                    loc[key] = val
+            result = loc
+    except Exception as exc:
+        logger.debug("[crwd-coach-ctx] location lookup failed for %s: %s", crwd_id, exc)
+        result = None
+    _location_cache_put(crwd_id, result)
+    return result
+
+
+def _format_profile_location(loc: Dict[str, str]) -> str:
+    """Human-readable location string from a location dict."""
+    parts = [
+        loc[k] for k in ("city", "state", "postal_code", "country") if loc.get(k)
+    ]
+    return ", ".join(parts)
 
 
 def bind_webhook_crwd_hint(crwd_user_id: Optional[str]) -> None:
@@ -420,6 +485,22 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
                 "chat if comparing to something you already showed."
             ),
         ]
+        loc = _fetch_member_location(crwd_id)
+        if loc:
+            lines.append(
+                f"- Profile location (authoritative from CRWD DB — ignore Honcho/"
+                f"memory if they disagree): {_format_profile_location(loc)}."
+            )
+            lines.append(
+                "- For store finding or local asks: use this city/ZIP. Call get_user "
+                "only if you need other profile fields."
+            )
+        elif loc is not None:
+            # Empty dict — user found, no location fields.
+            lines.append(
+                "- Profile has no city/ZIP on file — ask the member before searching "
+                "for a store. Do not guess from Honcho or memory."
+            )
         if cross_user:
             lines.extend([
                 "- The user is asking about another member's account.",

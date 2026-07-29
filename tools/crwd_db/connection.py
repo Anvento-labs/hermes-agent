@@ -56,6 +56,7 @@ USER_SECRET_RE = re.compile(r"password|token|otp|secret", re.IGNORECASE)
 USER_FIELDS = {
     "full_name": 1, "first_name": 1, "last_name": 1, "email": 1, "phone": 1,
     "bio": 1, "status": 1, "city": 1, "state": 1, "country": 1,
+    "postal_code": 1,
     "isBlocked": 1, "isDeleted": 1,
 }
 GIG_FIELDS = {

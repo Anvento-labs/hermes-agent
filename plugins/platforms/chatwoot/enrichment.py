@@ -334,6 +334,7 @@ def build_peer_card(
         x for x in (
             _nonempty(user.get("city")),
             _nonempty(user.get("state")),
+            _nonempty(user.get("postal_code")),
             _nonempty(user.get("country")),
         ) if x
     )

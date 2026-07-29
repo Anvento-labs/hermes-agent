@@ -19,6 +19,7 @@ from tools.crwd_db.connection import (
     _ALLOWED_COLLECTIONS,
     _HARD_LIMIT,
     _MATCH_FLOOR,
+    _USER_FIELDS,
     _db,
     _id_values,
     _oid,
@@ -26,6 +27,7 @@ from tools.crwd_db.connection import (
     check_crwd_db_requirements,
     reset_client,
 )
+from tools.crwd_db.users import _get_user
 from tools.crwd_db.custom_query import _has_where, _redact_secrets
 from tools.crwd_db.gigs import (
     _STORE_REQUIREMENT_FLAGS,
@@ -103,12 +105,14 @@ __all__ = [
     "_PROOF_REASON_CODES",
     "_PROOF_TYPES",
     "_STORE_REQUIREMENT_FLAGS",
+    "_USER_FIELDS",
     "_artifacts_for",
     "_collect_buy_products",
     "_db",
     "_effective_payout",
     "_full_gig",
     "_get_enrolled_gig_ids",
+    "_get_user",
     "_has_where",
     "_id_values",
     "_joined_member_filter",
