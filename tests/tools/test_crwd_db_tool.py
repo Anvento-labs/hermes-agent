@@ -1058,7 +1058,7 @@ class TestFindProof:
                 "proof_type": "receipt_target",
             }))
         row = out["items"][0]
-        url = f"https://app.example.com/my-gigs/{gig_id}"
+        url = f"https://app.example.com/explore/{gig_id}"
         assert row["gig_url"] == url
         assert row["gig_name"] == f"[Summer Gig]({url})"
 
@@ -1922,7 +1922,7 @@ class TestGetUserProofs:
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_proofs", "user_id": "user-a"}))
         row = out["items"][0]
-        url = f"https://live-staging.joincrwd.com/my-gigs/{gig_id}"
+        url = f"https://live-staging.joincrwd.com/explore/{gig_id}"
         assert row["gig_url"] == url
         assert proof_id not in row["gig_url"]
         assert row["gig_name_plain"] == "Friendly Red's of Windham"

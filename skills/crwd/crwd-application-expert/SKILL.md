@@ -9,7 +9,7 @@ metadata:
     requires_toolsets: [crwd]
     config:
       - key: crwd.app_base_url
-        description: Base URL of the CRWD member web app, used to build gig deep links (/my-gigs/<gig_id>)
+        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
         default: "https://live-staging.joincrwd.com"
         prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
@@ -29,7 +29,7 @@ screen fast.
 - **Explore** — the place to **browse available gigs**. Gigs are listed here; the member can
   **tap/open any gig to see its full detail view** (payout, deadline, store, requirements,
   what proof is needed).
-- Every gig's detail view also has a direct URL: `<crwd.app_base_url>/my-gigs/<gig_id>`
+- Every gig's detail view also has a direct URL: `<crwd.app_base_url>/explore/<gig_id>`
   (default `https://live-staging.joincrwd.com`). Tapping the gig in Explore and clicking a
   gig-name link the coach gives them land on the same screen.
 
@@ -53,7 +53,7 @@ screen fast.
    instead — those are applied-but-not-yet-accepted (`isAccepted: false`).
 3. **"How do I open a gig?"** — either they tap it in Explore, or, if you're naming a specific
    gig from `crwd_db` data, paste linked `name` / `gig_name` verbatim
-   (`[Title](…/my-gigs/<_id>)`) so the title is clickable — do not also append a bare URL.
+   (`[Title](…/explore/<_id>)`) so the title is clickable — do not also append a bare URL.
 4. If they're stuck opening a gig or the screen looks wrong, walk them to it step by step. If
    something appears **broken** (won't load, button does nothing), switch to
    `crwd-troubleshooting`.

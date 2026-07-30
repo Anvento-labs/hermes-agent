@@ -9,7 +9,7 @@ metadata:
     requires_toolsets: [crwd, web]
     config:
       - key: crwd.app_base_url
-        description: Base URL of the CRWD member web app, used to build gig deep links (/my-gigs/<gig_id>)
+        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
         default: "https://live-staging.joincrwd.com"
         prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
@@ -90,7 +90,7 @@ reminder via `crwd-reminders-followups`).
 6. **Every gig name must be a clickable markdown title — fail-closed.**
    Applies to **every** gig you name in the reply — not only single-gig answers.
    - Prefer the tool's already-linked `name` / `gig_name` (must look like
-     `[Title](…/my-gigs/<_id>)`). Paste that field **verbatim** into the reply.
+     `[Title](…/explore/<_id>)`). Paste that field **verbatim** into the reply.
    - Nested payloads (`get_user_gigs` / `get_waitlisted_gigs`): use `gig.name` (linked),
      not a freehand title.
    - If `name` / `gig_name` is plain text but `gig_url` is present, render
@@ -98,8 +98,8 @@ reminder via `crwd-reminders-followups`).
    - Never use `name_plain` / `gig_name_plain` alone in the member-facing reply.
    - Never rewrite a linked title to `**Title**` / bold-only text, a plain name,
      `Title — url`, a bare URL after the name, a paraphrase from chat memory, or
-     an invented `/explore/` link. On pagination ("show more"), use fresh linked
-     `name` from the new `list_active_gigs` page.
+     any path other than the tool's `/explore/<id>` link. On pagination
+     ("show more"), use fresh linked `name` from the new `list_active_gigs` page.
    - If the payload has no `gig_url` and the name stays plain, `CRWD_APP_BASE_URL` /
      `crwd.app_base_url` is likely unset — say you can't deep-link rather than
      inventing a URL. Still never ship a clickable-looking fake link.
@@ -197,10 +197,10 @@ For the deeper lifecycle detail, load
   can't see live inventory (say "call to confirm," never "it's in stock"). Keep store
   replies to name + address + phone + hours.
 - **Gig name href is mandatory.** Every gig named in the reply must be a clickable
-  `[Title](…/my-gigs/<id>)`. Prefer verbatim linked `name` / `gig_name` / `gig.name`;
+  `[Title](…/explore/<id>)`. Prefer verbatim linked `name` / `gig_name` / `gig.name`;
   if plain + `gig_url`, build `[plain](gig_url)`. Never use `name_plain` alone, never
   `**Title**` / bold-only, never paraphrase from memory, never append a separate bare
-  URL, never rebuild `/explore/` links. If `gig_url` is missing and the name is plain,
+  URL. If `gig_url` is missing and the name is plain,
   do not invent a link — `CRWD_APP_BASE_URL` / `crwd.app_base_url` may be unset.
 
 ## Verification

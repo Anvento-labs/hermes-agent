@@ -3578,7 +3578,7 @@ OPTIONAL_ENV_VARS = {
         "advanced": True,
     },
     "CRWD_APP_BASE_URL": {
-        "description": "CRWD member web app base URL used to build gig deep links (/my-gigs/<gig_id>) in crwd_db payloads",
+        "description": "CRWD member web app base URL used to build gig deep links (/explore/<gig_id>) in crwd_db payloads",
         "prompt": "CRWD app base URL (e.g. https://live-staging.joincrwd.com)",
         "url": None,
         "tools": ["crwd_db"],

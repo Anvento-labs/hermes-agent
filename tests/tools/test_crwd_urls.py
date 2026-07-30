@@ -7,7 +7,7 @@ import tools.crwd_urls as cu
 
 GIG_ID = "6a3411008972fa2d14ce8fe0"
 BASE = "https://live-staging.joincrwd.com"
-URL = f"{BASE}/my-gigs/{GIG_ID}"
+URL = f"{BASE}/explore/{GIG_ID}"
 LINKED = f"[Summer Skincare Bundle]({URL})"
 
 
@@ -25,7 +25,7 @@ class TestNormalizeGigId:
 
 
 class TestGigPageUrl:
-    def test_builds_my_gigs_path(self, monkeypatch):
+    def test_builds_explore_path(self, monkeypatch):
         monkeypatch.setenv("CRWD_APP_BASE_URL", BASE)
         assert cu.gig_page_url(GIG_ID) == URL
 
@@ -37,12 +37,12 @@ class TestGigPageUrl:
         monkeypatch.delenv("CRWD_APP_BASE_URL", raising=False)
         assert cu.gig_page_url(GIG_ID) is None
 
-    def test_never_explore(self, monkeypatch):
+    def test_uses_explore_not_my_gigs(self, monkeypatch):
         monkeypatch.setenv("CRWD_APP_BASE_URL", BASE)
         url = cu.gig_page_url(GIG_ID)
         assert url is not None
-        assert "/explore/" not in url
-        assert "/my-gigs/" in url
+        assert "/explore/" in url
+        assert "/my-gigs/" not in url
 
 
 class TestAttachGigUrl:
