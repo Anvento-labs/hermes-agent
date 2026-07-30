@@ -1041,6 +1041,27 @@ class TestFindProof:
         assert "status" not in coll.find.call_args[0][0]
         assert {i["status"] for i in out["items"]} == {"rejected", "accepted"}
 
+    def test_gig_name_is_markdown_linked_via_crwd_id(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        monkeypatch.setenv("CRWD_APP_BASE_URL", "https://app.example.com")
+        gig_id = "6a3411008972fa2d14ce8fe0"
+        coll = MagicMock()
+        cursor = MagicMock()
+        cursor.sort.return_value.limit.return_value = [
+            _proof_doc(crwd_id=gig_id, gig_name="Summer Gig"),
+        ]
+        coll.find.return_value = cursor
+        with patch.object(t.connection, "_db", return_value=_fake_db({"proof_submissions": coll})):
+            out = json.loads(t.crwd_db_tool({
+                "action": "find_proof",
+                "proof_id": "REC# 2-6177-0190-0173-4723-7",
+                "proof_type": "receipt_target",
+            }))
+        row = out["items"][0]
+        url = f"https://app.example.com/my-gigs/{gig_id}"
+        assert row["gig_url"] == url
+        assert row["gig_name"] == f"[Summer Gig]({url})"
+
     def test_user_id_filter_narrows(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         coll = MagicMock()
@@ -1885,6 +1906,29 @@ class TestGetUserProofs:
 
     def test_action_is_registered_in_the_schema(self):
         assert "get_user_proofs" in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+
+    def test_gig_name_is_markdown_linked_via_crwd_id(self, monkeypatch):
+        """Proof ``_id`` is not the gig — deep links must use ``crwd_id``."""
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        monkeypatch.setenv("CRWD_APP_BASE_URL", "https://live-staging.joincrwd.com")
+        gig_id = "6a3411008972fa2d14ce8fe0"
+        proof_id = "69b8614f1083b9302fd0a9a7"
+        coll, db = self._db_with([_proof_doc(
+            _id=t._oid(proof_id),
+            crwd_id=gig_id,
+            gig_name="Friendly Red's of Windham",
+        )])
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user_proofs", "user_id": "user-a"}))
+        row = out["items"][0]
+        url = f"https://live-staging.joincrwd.com/my-gigs/{gig_id}"
+        assert row["gig_url"] == url
+        assert proof_id not in row["gig_url"]
+        assert row["gig_name_plain"] == "Friendly Red's of Windham"
+        assert row["gig_name"] == f"[Friendly Red's of Windham]({url})"
+        # Proof record id preserved (not used as the gig deep-link).
+        assert row["_id"] is not None
 
 
 class TestArchivedGigsAreInvisible:

@@ -25,8 +25,20 @@ from tools.crwd_db.connection import (
 
 from tools.crwd_db.membership import _member_or_filter
 from tools.crwd_db.serialize import _serialize_doc, _serialize_docs
+from tools.crwd_urls import attach_gig_url
 
 logger = logging.getLogger(__name__)
+
+
+def _linkify_proof_payload(item: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Attach markdown gig titles on proof-shaped tool payloads (read path only).
+
+    Proof docs use ``_id`` for the proof record and ``crwd_id`` for the gig —
+    ``attach_gig_url`` prefers ``crwd_id`` / ``gig_id`` over ``_id``.
+    """
+    if not item:
+        return item
+    return attach_gig_url(item, inline_name=True)
 
 _PROOF_TYPES = {
     "receipt_target", "receipt_amazon", "receipt_other",
@@ -308,7 +320,7 @@ def _required_artifacts(crwd_id: str) -> Dict[str, Any]:
             if store.get(flag) and flag not in field_level:
                 field_level.append(flag)
     return {"found": True, "required": required, "field_level": field_level,
-            "gig_name": gig.get("name")}
+            "gig_name": gig.get("name"), "crwd_id": str(crwd_id).strip()}
 
 
 def _gig_proof_completion(user_id: str, crwd_id: str) -> Dict[str, Any]:
@@ -351,6 +363,7 @@ def _gig_proof_completion(user_id: str, crwd_id: str) -> Dict[str, Any]:
         "field_level": spec.get("field_level") or [],
         "accepted_types": sorted(accepted),
         "gig_name": spec.get("gig_name"),
+        "crwd_id": str(crwd_id).strip(),
     }
 
 
@@ -451,7 +464,9 @@ def _check_gig_proof_completion(user_id: str, crwd_id: str) -> str:
     out = _gig_proof_completion(user_id, crwd_id)
     out["_type"] = "crwd_gig_proof_completion"
     out["error"] = None
-    return json.dumps(out, ensure_ascii=False, default=str)
+    return json.dumps(
+        _linkify_proof_payload(out), ensure_ascii=False, default=str,
+    )
 
 
 def _store_proof(
@@ -632,7 +647,7 @@ def _proof_conflict(
         },
         max_time_ms=_MAX_TIME_MS,
     )
-    return _serialize_doc(doc) if doc else None
+    return _linkify_proof_payload(_serialize_doc(doc)) if doc else None
 
 
 def _check_duplicate_proof(
@@ -700,7 +715,9 @@ def _get_user_proofs(
         .sort("created_at", -1)
         .limit(row_limit)
     )
-    items = _serialize_docs(list(cursor))
+    items = [
+        _linkify_proof_payload(doc) for doc in _serialize_docs(list(cursor))
+    ]
     return json.dumps(
         {
             "_type": "crwd_user_proofs", "items": items, "count": len(items),
@@ -732,7 +749,9 @@ def _find_proof(
         .sort("created_at", -1)
         .limit(row_limit)
     )
-    items = _serialize_docs(list(cursor))
+    items = [
+        _linkify_proof_payload(doc) for doc in _serialize_docs(list(cursor))
+    ]
     return json.dumps(
         {
             "_type": "crwd_proof_lookup", "items": items,

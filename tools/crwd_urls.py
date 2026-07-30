@@ -77,7 +77,9 @@ def attach_gig_url(item: dict, *, inline_name: bool = True) -> dict:
     if not isinstance(item, dict):
         return item
 
-    gig_id = item.get("_id") or item.get("gig_id")
+    # Prefer explicit gig fields over document ``_id`` (proof rows use
+    # ``_id`` = proof record id and ``crwd_id`` = gig id).
+    gig_id = item.get("gig_id") or item.get("crwd_id") or item.get("_id")
     url = gig_page_url(gig_id)
     if not url:
         return item

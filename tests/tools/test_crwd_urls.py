@@ -97,3 +97,28 @@ class TestAttachGigUrl:
         assert item["name"] == "Keep Plain"
         assert item["gig_url"] == URL
         assert "name_plain" not in item
+
+    def test_proof_shaped_prefers_crwd_id_over_proof_id(self, monkeypatch):
+        """Proof docs: ``_id`` is the proof record; ``crwd_id`` is the gig."""
+        monkeypatch.setenv("CRWD_APP_BASE_URL", BASE)
+        proof_id = "69b8614f1083b9302fd0a9a7"
+        item = cu.attach_gig_url({
+            "_id": proof_id,
+            "crwd_id": GIG_ID,
+            "gig_name": "Friendly Red's of Windham",
+        })
+        assert item["gig_url"] == URL
+        assert proof_id not in item["gig_url"]
+        assert item["gig_name_plain"] == "Friendly Red's of Windham"
+        assert item["gig_name"] == f"[Friendly Red's of Windham]({URL})"
+
+    def test_gig_id_wins_over_crwd_id(self, monkeypatch):
+        monkeypatch.setenv("CRWD_APP_BASE_URL", BASE)
+        other = "aaaaaaaaaaaaaaaaaaaaaaaa"
+        item = cu.attach_gig_url({
+            "gig_id": GIG_ID,
+            "crwd_id": other,
+            "gig_name": "Pul Tool",
+        })
+        assert item["gig_url"] == URL
+        assert other not in item["gig_url"]
