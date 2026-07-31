@@ -202,6 +202,8 @@ For the deeper lifecycle detail, load
   `**Title**` / bold-only, never paraphrase from memory, never append a separate bare
   URL. If `gig_url` is missing and the name is plain,
   do not invent a link — `CRWD_APP_BASE_URL` / `crwd.app_base_url` may be unset.
+- **No tables for gig catalogs.** Never format open or assigned gigs as a markdown
+  table or Gig/Payout column grid.
 
 ## Verification
 
