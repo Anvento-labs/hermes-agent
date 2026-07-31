@@ -9,7 +9,7 @@ metadata:
     requires_toolsets: [crwd]
     config:
       - key: crwd.app_base_url
-        description: Base URL of the CRWD member web app, used to build gig deep links (/my-gigs/<gig_id>)
+        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
         default: "https://live-staging.joincrwd.com"
         prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
@@ -37,7 +37,7 @@ skill (proof is just the tail of doing the gig).
    that (step 6). Don't use `type_of_work_proof`; it is unset on nearly every gig. Hand off if
    what's required is unclear.
 2. **Paste linked `name` / `gig_name` verbatim.** `get_gig_details` and `get_user_gig_status`
-   return those as `[Title](…/my-gigs/<_id>)`. Copy the field as-is so the title is clickable — do **not** also append a bare URL. Full
+   return those as `[Title](…/explore/<_id>)`. Copy the field as-is so the title is clickable — do **not** also append a bare URL. Full
    detail: `skill_view("crwd-reference", "references/gig-lifecycle.md")`.
 3. **Surface every product + buy link.** Prefer `get_user_products` with `crwd_id`
    (or `get_gig_details` / status `products[]`) so multi-SKU gigs list all items —

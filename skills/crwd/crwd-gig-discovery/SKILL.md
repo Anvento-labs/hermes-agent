@@ -9,7 +9,7 @@ metadata:
     requires_toolsets: [crwd, web]
     config:
       - key: crwd.app_base_url
-        description: Base URL of the CRWD member web app, used to build gig deep links (/my-gigs/<gig_id>)
+        description: Base URL of the CRWD member web app, used to build gig deep links (/explore/<gig_id>)
         default: "https://live-staging.joincrwd.com"
         prompt: "CRWD app base URL (e.g. https://app.joincrwd.com)"
 ---
@@ -88,16 +88,18 @@ reminder via `crwd-reminders-followups`).
    membership rows (including completed, rejected, or deleted gigs). Use for "what gigs have
    I done before?" — not `get_user_gigs` (in-progress only) or `list_active_gigs`.
 6. **Every gig name must be a clickable markdown title — fail-closed.**
+   Applies to **every** gig you name in the reply — not only single-gig answers.
    - Prefer the tool's already-linked `name` / `gig_name` (must look like
-     `[Title](…/my-gigs/<_id>)`). Paste that field **verbatim** into the reply.
+     `[Title](…/explore/<_id>)`). Paste that field **verbatim** into the reply.
    - Nested payloads (`get_user_gigs` / `get_waitlisted_gigs`): use `gig.name` (linked),
      not a freehand title.
    - If `name` / `gig_name` is plain text but `gig_url` is present, render
      `[plain](gig_url)` yourself — never send a bare title.
    - Never use `name_plain` / `gig_name_plain` alone in the member-facing reply.
-   - Never write `Title — url`, append a bare URL after the name, paraphrase from
-     chat memory, or invent `/explore/` links. On "show more", use fresh linked
-     `name` from the new `list_active_gigs` page.
+   - Never rewrite a linked title to `**Title**` / bold-only text, a plain name,
+     `Title — url`, a bare URL after the name, a paraphrase from chat memory, or
+     any path other than the tool's `/explore/<id>` link. On pagination
+     ("show more"), use fresh linked `name` from the new `list_active_gigs` page.
    - If the payload has no `gig_url` and the name stays plain, `CRWD_APP_BASE_URL` /
      `crwd.app_base_url` is likely unset — say you can't deep-link rather than
      inventing a URL. Still never ship a clickable-looking fake link.
@@ -195,11 +197,13 @@ For the deeper lifecycle detail, load
   can't see live inventory (say "call to confirm," never "it's in stock"). Keep store
   replies to name + address + phone + hours.
 - **Gig name href is mandatory.** Every gig named in the reply must be a clickable
-  `[Title](…/my-gigs/<id>)`. Prefer verbatim linked `name` / `gig_name` / `gig.name`;
+  `[Title](…/explore/<id>)`. Prefer verbatim linked `name` / `gig_name` / `gig.name`;
   if plain + `gig_url`, build `[plain](gig_url)`. Never use `name_plain` alone, never
-  paraphrase from memory, never append a separate bare URL, never rebuild `/explore/`
-  links. If `gig_url` is missing and the name is plain, do not invent a link —
-  `CRWD_APP_BASE_URL` / `crwd.app_base_url` may be unset.
+  `**Title**` / bold-only, never paraphrase from memory, never append a separate bare
+  URL. If `gig_url` is missing and the name is plain,
+  do not invent a link — `CRWD_APP_BASE_URL` / `crwd.app_base_url` may be unset.
+- **No tables for gig catalogs.** Never format open or assigned gigs as a markdown
+  table or Gig/Payout column grid.
 
 ## Verification
 
@@ -220,5 +224,6 @@ For the deeper lifecycle detail, load
 - The member knows their current step in the flow and what to do next (quoted
   `next_step` where relevant; how-to pointed at `crwd-gig-execution`).
 - **Every gig named in the reply has a clickable markdown title.** If any gig would
-  have been plain text, you fixed it (verbatim linked field or `[plain](gig_url)`)
-  before sending — no trailing bare URL, no `name_plain`-only titles.
+  have been plain text or `**bold-only**`, you fixed it (verbatim linked field or
+  `[plain](gig_url)`) before sending — no trailing bare URL, no `name_plain`-only
+  titles, no `**Title**` substitutes.

@@ -171,9 +171,11 @@ different gig**.
 `find_proof` gives the fuller history behind an id.
 
 **"What have I submitted?" / "did my receipt go through?"** → `get_user_proofs(user_id)`,
-or with `crwd_id` for one gig. **Never ask a member for an order number to look up
-their own proof** — you already stored it. `find_proof` is keyed on a proof id and
-answers "who else touched this purchase", which is a different question.
+or with `crwd_id` for one gig. Paste linked `gig_name` verbatim
+(`[Title](…/explore/<crwd_id>)`) — never bold-only / plain titles. **Never ask a
+member for an order number to look up their own proof** — you already stored it.
+`find_proof` is keyed on a proof id and answers "who else touched this purchase",
+which is a different question.
 
 ### 7. Coach before you judge — ask, don't guess
 

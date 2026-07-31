@@ -30,12 +30,12 @@ def normalize_gig_id(value: Any) -> str:
 
 
 def gig_page_url(gig_id: Any, *, base_url: Optional[str] = None) -> Optional[str]:
-    """Build ``{base}/my-gigs/{gig_id}``, or None when base/id are missing."""
+    """Build ``{base}/explore/{gig_id}``, or None when base/id are missing."""
     base = (base_url if base_url is not None else crwd_app_base_url()).strip().rstrip("/")
     gid = normalize_gig_id(gig_id)
     if not base or not gid:
         return None
-    return f"{base}/my-gigs/{gid}"
+    return f"{base}/explore/{gid}"
 
 
 def format_gig_name_link(name: str, gig_id: Any, *, base_url: Optional[str] = None) -> Optional[str]:
@@ -77,7 +77,9 @@ def attach_gig_url(item: dict, *, inline_name: bool = True) -> dict:
     if not isinstance(item, dict):
         return item
 
-    gig_id = item.get("_id") or item.get("gig_id")
+    # Prefer explicit gig fields over document ``_id`` (proof rows use
+    # ``_id`` = proof record id and ``crwd_id`` = gig id).
+    gig_id = item.get("gig_id") or item.get("crwd_id") or item.get("_id")
     url = gig_page_url(gig_id)
     if not url:
         return item

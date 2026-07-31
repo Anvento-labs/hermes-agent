@@ -52,10 +52,10 @@ flags are the proof spec.
 Every gig has a page in the CRWD app at:
 
 ```text
-<crwd.app_base_url>/my-gigs/<gig_id>
+<crwd.app_base_url>/explore/<gig_id>
 ```
 
-e.g. `https://live-staging.joincrwd.com/my-gigs/6a3411008972fa2d14ce8fe0`. Runtime
+e.g. `https://live-staging.joincrwd.com/explore/6a3411008972fa2d14ce8fe0`. Runtime
 `crwd_db` payloads set `name` / `gig_name` to markdown `[Title](that URL)` when
 `CRWD_APP_BASE_URL` is set, keep `gig_url` as the bare URL, and keep the human
 title in `name_plain` / `gig_name_plain`. The id comes straight from whichever
@@ -63,4 +63,5 @@ title in `name_plain` / `gig_name_plain`. The id comes straight from whichever
 
 Gig-facing skills paste `name` / `gig_name` verbatim so the **title is the
 clickable link**. Do not also append a bare URL after the name, and do not
-rebuild `/explore/` URLs. Member chat and Chatwoot both render Markdown links.
+rebuild a different path — keep the tool's `/explore/<gig_id>` URL. Member chat
+and Chatwoot both render Markdown links.
