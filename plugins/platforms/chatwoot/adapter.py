@@ -47,6 +47,7 @@ from gateway.platforms.base import (
     cache_image_from_bytes,
     is_network_accessible,
 )
+from gateway.platforms.helpers import strip_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,11 @@ class ChatwootAdapter(BasePlatformAdapter):
         self._seen_ids: Set[str] = set()
         self._seen_id_order: Deque[str] = deque()
         self._private_note_warned = False
+        # conversation chat_id → Chatwoot channel type (e.g. "Channel::TwilioSms"),
+        # learned from inbound webhooks so send() can format for plain-text
+        # channels. Bounded like _seen_ids to avoid unbounded growth.
+        self._conv_channel: Dict[str, str] = {}
+        self._conv_channel_order: Deque[str] = deque()
 
     # -- small utilities ------------------------------------------------------
 
@@ -475,12 +481,32 @@ class ChatwootAdapter(BasePlatformAdapter):
             return None
 
         chat_id = _format_chat_id(account_id, conversation_id)
+
+        # Inbox / channel awareness: Chatwoot inboxes differ in rendering —
+        # the web widget (Channel::Api) renders markdown, Twilio SMS inboxes
+        # deliver raw text. Remember the channel for send()-time formatting and
+        # surface it to the LLM via chat_topic.
+        inbox = payload.get("inbox") if isinstance(payload.get("inbox"), dict) else {}
+        inbox_name = str(inbox.get("name") or "").strip()
+        conversation = (
+            payload.get("conversation")
+            if isinstance(payload.get("conversation"), dict)
+            else {}
+        )
+        channel_type = str(conversation.get("channel") or "").strip()
+        if channel_type:
+            self._remember_channel(chat_id, channel_type)
+        chat_topic = None
+        if inbox_name or channel_type:
+            chat_topic = f"inbox: {inbox_name or 'unknown'} ({channel_type or 'unknown channel'})"
+
         source = self.build_source(
             chat_id=chat_id,
             chat_name=sender_name or f"conversation {conversation_id}",
             chat_type="direct",
             user_id=sender_id,
             user_name=sender_name,
+            chat_topic=chat_topic,
         )
         mtype = MessageType.PHOTO if media_urls else MessageType.TEXT
         return MessageEvent(
@@ -536,6 +562,25 @@ class ChatwootAdapter(BasePlatformAdapter):
         filename = url.rsplit("/", 1)[-1] or "attachment"
         return cache_document_from_bytes(data, filename), "application/octet-stream"
 
+    # -- channel awareness ----------------------------------------------------
+
+    # Chatwoot channel types that deliver raw text (no markdown rendering).
+    _PLAIN_TEXT_CHANNELS = {"Channel::TwilioSms", "Channel::Sms"}
+
+    # SMS-friendly cap: ~10 GSM-7 segments, mirrors the native SMS adapter.
+    SMS_MAX_MESSAGE_LENGTH = 1600
+
+    def _remember_channel(self, chat_id: str, channel_type: str) -> None:
+        if chat_id not in self._conv_channel:
+            self._conv_channel_order.append(chat_id)
+            while len(self._conv_channel_order) > self._max_seen_ids:
+                evicted = self._conv_channel_order.popleft()
+                self._conv_channel.pop(evicted, None)
+        self._conv_channel[chat_id] = channel_type
+
+    def _is_sms_conversation(self, chat_id: str) -> bool:
+        return self._conv_channel.get(chat_id) in self._PLAIN_TEXT_CHANNELS
+
     # -- outbound: replies ----------------------------------------------------
 
     def _messages_endpoint(self, account_id: str, conversation_id: str) -> str:
@@ -544,17 +589,18 @@ class ChatwootAdapter(BasePlatformAdapter):
             f"/conversations/{conversation_id}/messages"
         )
 
-    def _split(self, content: str) -> List[str]:
-        """Split content into <= MAX_MESSAGE_LENGTH chunks on newline boundaries."""
-        if len(content) <= self.MAX_MESSAGE_LENGTH:
+    def _split(self, content: str, max_length: Optional[int] = None) -> List[str]:
+        """Split content into <= max_length chunks on newline boundaries."""
+        limit = max_length or self.MAX_MESSAGE_LENGTH
+        if len(content) <= limit:
             return [content] if content else []
         chunks: List[str] = []
         remaining = content
-        while len(remaining) > self.MAX_MESSAGE_LENGTH:
-            window = remaining[: self.MAX_MESSAGE_LENGTH]
+        while len(remaining) > limit:
+            window = remaining[:limit]
             split_at = window.rfind("\n")
             if split_at <= 0:
-                split_at = self.MAX_MESSAGE_LENGTH
+                split_at = limit
             chunks.append(remaining[:split_at])
             remaining = remaining[split_at:].lstrip("\n")
         if remaining:
@@ -588,7 +634,15 @@ class ChatwootAdapter(BasePlatformAdapter):
         except ValueError as exc:
             return SendResult(success=False, error=str(exc))
 
-        chunks = self._split(content)
+        # SMS inboxes deliver raw text: strip markdown (keeping URLs) so the
+        # member never sees literal ``[title](url)`` or ``**bold**``, and use
+        # the SMS-sized chunk cap. Private notes stay verbatim — agents read
+        # them in the Chatwoot UI, which renders markdown.
+        if not private and self._is_sms_conversation(chat_id):
+            content = strip_markdown(content)
+            chunks = self._split(content, max_length=self.SMS_MAX_MESSAGE_LENGTH)
+        else:
+            chunks = self._split(content)
         if not chunks:
             return SendResult(success=True)
 
