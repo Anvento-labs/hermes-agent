@@ -49,12 +49,19 @@ def _open_gig_filter() -> Dict[str, Any]:
     real archived rows still carry status "Active" with a future end_date. Without
     this the coach listed an archived gig a member was never enrolled in as one of
     "your active gigs" -- while the app showed one gig and the coach said three.
+
+    Gigs with no end_date at all are open-ended: the app's Explore page shows
+    them, so treat a missing/null end_date as "not expired" rather than
+    filtering the gig out.
     """
     return {
         "isDeleted": {"$ne": True},
         "isArchived": {"$ne": True},
         "status": {"$regex": r"^active$", "$options": "i"},
-        "end_date": {"$gte": _now()},
+        "$or": [
+            {"end_date": {"$gte": _now()}},
+            {"end_date": None},  # matches both null and missing field
+        ],
     }
 
 

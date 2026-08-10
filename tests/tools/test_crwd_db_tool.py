@@ -1941,6 +1941,17 @@ class TestArchivedGigsAreInvisible:
         f = t._open_gig_filter()
         assert f["isArchived"] == {"$ne": True}
 
+    def test_open_gig_filter_keeps_gigs_without_end_date(self):
+        # Open-ended gigs (null/missing end_date) show on the app's Explore
+        # page, so the filter must not require a future end_date outright.
+        f = t._open_gig_filter()
+        assert "end_date" not in f
+        assert {"end_date": None} in f["$or"]
+        assert any(
+            isinstance(c.get("end_date"), dict) and "$gte" in c["end_date"]
+            for c in f["$or"]
+        )
+
     def test_status_skips_membership_whose_gig_is_archived(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         live_id = t._oid("69b8614f1083b9302fd0a9a7")
