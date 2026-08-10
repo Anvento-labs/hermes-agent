@@ -582,7 +582,6 @@ def _store_proof(
         "conversation_id": (os.getenv("HERMES_SESSION_CHAT_ID") or "").strip(),
         "created_at": now,
         "updated_at": now,
-        "created_by": "hermes",
     }
     if status == "accepted" and crwd_id:
         # Would this acceptance leave nothing outstanding? Evaluate against the
