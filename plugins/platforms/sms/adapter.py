@@ -400,6 +400,9 @@ def _strip_markdown_for_sms(message: str) -> str:
     message = re.sub(r"```[a-z]*\n?", "", message)
     message = re.sub(r"`(.+?)`", r"\1", message)
     message = re.sub(r"^#{1,6}\s+", "", message, flags=re.MULTILINE)
+    message = re.sub(
+        r"\[([^\]]+)\]\((https?://[^\)]+)\)", r"\1: \2", message
+    )
     message = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", message)
     message = re.sub(r"\n{3,}", "\n\n", message)
     return message.strip()
