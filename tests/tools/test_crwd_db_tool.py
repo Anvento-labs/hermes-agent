@@ -1931,6 +1931,64 @@ class TestGetUserProofs:
         assert row["_id"] is not None
 
 
+class TestOpenGigEndDateFilter:
+    """Explore treats missing end_date as not expired and compares calendar
+    days in ET. The coach open filter must match or Active gigs like Pul Tool
+    / Insta Promo (end_date null) never appear in list_active_gigs."""
+
+    def test_open_gig_filter_allows_null_end_date(self):
+        f = t._open_gig_filter()
+        assert f["isArchived"] == {"$ne": True}
+        assert f["isDeleted"] == {"$ne": True}
+        assert "$or" in f
+        assert {"end_date": None} in f["$or"]
+        gte_clause = next(
+            clause for clause in f["$or"] if isinstance(clause.get("end_date"), dict)
+        )
+        assert "$gte" in gte_clause["end_date"]
+        assert gte_clause["end_date"]["$gte"] == t.gigs._end_date_open_cutoff()
+        assert "end_date" not in f  # open window is only via $or, not top-level $gte
+
+    def test_end_date_open_cutoff_is_start_of_today_et(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        cutoff = t.gigs._end_date_open_cutoff()
+        today_et = datetime.now(ZoneInfo("America/New_York")).date()
+        assert cutoff == datetime(today_et.year, today_et.month, today_et.day)
+        assert cutoff.hour == 0 and cutoff.minute == 0 and cutoff.second == 0
+
+    def test_list_active_gigs_query_uses_null_or_cutoff(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        null_oid = t._oid("6a321eca7ee4d2f6b5447d35")
+        mock_crwds = MagicMock()
+        cursor = MagicMock()
+        mock_crwds.find.return_value = cursor
+        mock_crwds.count_documents.return_value = 1
+        cursor.sort.return_value = cursor
+        cursor.skip.return_value = cursor
+        cursor.limit.return_value = [
+            {
+                "_id": null_oid,
+                "name": "Pul Tool Walmart Gig",
+                "end_date": None,
+                "gig_stores": [{"payout_amount": 5, "products": []}],
+            },
+        ]
+        with patch.object(t.gigs, "_spots_full_gig_oids", return_value=[]), \
+             patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            out = json.loads(t.crwd_db_tool({"action": "list_active_gigs"}))
+        assert out["_type"] == "gig_list"
+        assert len(out["items"]) == 1
+        assert out["items"][0]["name"] == "Pul Tool Walmart Gig"
+        query_used = mock_crwds.find.call_args[0][0]
+        assert {"end_date": None} in query_used["$or"]
+        gte_clause = next(
+            c for c in query_used["$or"] if isinstance(c.get("end_date"), dict)
+        )
+        assert gte_clause["end_date"]["$gte"] == t.gigs._end_date_open_cutoff()
+
+
 class TestArchivedGigsAreInvisible:
     """The app hides archived gigs, and real archived rows still carry
     status "Active" with a future end_date -- so isArchived is load-bearing.

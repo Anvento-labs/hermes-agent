@@ -5,7 +5,9 @@ from __future__ import annotations
 import difflib
 import json
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from tools.crwd_urls import attach_gig_url
 from tools.registry import tool_error
@@ -21,7 +23,6 @@ from tools.crwd_db.connection import (
     _MAX_TIME_MS,
     _OBJECT_ID_IN_TEXT_RE,
     _id_values,
-    _now,
     _oid,
 )
 
@@ -42,8 +43,26 @@ _STORE_REQUIREMENT_FLAGS = (
     "requires_store_address", "requires_ugc_post",
 )
 
+_ET = ZoneInfo("America/New_York")
+
+
+def _end_date_open_cutoff() -> datetime:
+    """Start of today's calendar day in America/New_York, as naive midnight UTC.
+
+    Admin stores end dates as midnight UTC for a picked calendar day. Explore
+    treats a gig as expired only when that YYYY-MM-DD is before today in ET.
+    Comparing against start-of-today ET (as a naive datetime) matches that.
+    """
+    today_et = datetime.now(_ET).date()
+    return datetime(today_et.year, today_et.month, today_et.day)
+
+
 def _open_gig_filter() -> Dict[str, Any]:
-    """Filter for currently-open gigs: not deleted, not archived, Active, end_date in future.
+    """Filter for currently-open gigs: not deleted, not archived, Active, not expired.
+
+    Matches Explore: missing/null ``end_date`` is open; otherwise the end date's
+    calendar day must be today or later in America/New_York (admin stores
+    midnight UTC for the picked day).
 
     ``isArchived`` matters as much as ``status``: the app hides archived gigs, and
     real archived rows still carry status "Active" with a future end_date. Without
@@ -54,7 +73,10 @@ def _open_gig_filter() -> Dict[str, Any]:
         "isDeleted": {"$ne": True},
         "isArchived": {"$ne": True},
         "status": {"$regex": r"^active$", "$options": "i"},
-        "end_date": {"$gte": _now()},
+        "$or": [
+            {"end_date": None},
+            {"end_date": {"$gte": _end_date_open_cutoff()}},
+        ],
     }
 
 
