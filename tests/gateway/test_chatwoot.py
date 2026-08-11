@@ -564,6 +564,56 @@ class TestAttachments:
         ev = a._convert(payload)
         assert ev is not None and ev.text == "hello there" and ev.media_urls == []
 
+    def test_download_retries_after_transient_404(self, monkeypatch):
+        """Chatwoot can fire message_created before the MMS blob is stored —
+        the first fetch 404s and a retry a moment later succeeds."""
+        import io
+        import urllib.error
+        import urllib.request
+
+        a = _make_adapter()
+        monkeypatch.setattr(type(a), "ATTACHMENT_RETRY_DELAYS", (0.0, 0.0, 0.0))
+        calls = {"n": 0}
+
+        class _Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def _fake_urlopen(url, timeout=None):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+            return _Resp(b"imgbytes")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _fake_urlopen)
+        monkeypatch.setattr(
+            "gateway.platforms.base.cache_image_from_bytes",
+            lambda data, ext: "/tmp/cached.jpg",
+        )
+        import plugins.platforms.chatwoot.adapter as _adapter_mod
+
+        monkeypatch.setattr(_adapter_mod, "cache_image_from_bytes", lambda data, ext: "/tmp/cached.jpg")
+        path, mtype = a._download_and_cache("https://x/p.png", "image")
+        assert calls["n"] == 3
+        assert path == "/tmp/cached.jpg" and mtype == "image/jpeg"
+
+    def test_download_raises_after_exhausted_retries(self, monkeypatch):
+        import urllib.error
+        import urllib.request
+
+        a = _make_adapter()
+        monkeypatch.setattr(type(a), "ATTACHMENT_RETRY_DELAYS", (0.0,))
+
+        def _always_404(url, timeout=None):
+            raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+        monkeypatch.setattr(urllib.request, "urlopen", _always_404)
+        with pytest.raises(urllib.error.HTTPError):
+            a._download_and_cache("https://x/p.png", "image")
+
     @pytest.mark.asyncio
     async def test_outbound_multipart_builds_attachments_field(self, tmp_path):
         a = _make_adapter()

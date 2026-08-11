@@ -423,7 +423,10 @@ class ChatwootAdapter(BasePlatformAdapter):
             self._remember(msg_id)
 
         try:
-            event = self._convert(payload)
+            # Off the event loop: conversion may download attachments, with
+            # retries — Chatwoot can fire message_created before the blob is
+            # committed to storage, so the first fetch may 404 briefly.
+            event = await asyncio.to_thread(self._convert, payload)
         except Exception:
             logger.debug("[chatwoot] converter raised; acking to avoid retry", exc_info=True)
             return web.Response(status=200)
@@ -564,16 +567,39 @@ class ChatwootAdapter(BasePlatformAdapter):
                 media_urls.append(path)
                 media_types.append(media_type)
 
+    # Backoff delays (seconds) between attachment fetch attempts. Chatwoot can
+    # fire message_created before the MMS blob is committed to ActiveStorage,
+    # so the data_url redirect 404s for the first second or two.
+    ATTACHMENT_RETRY_DELAYS: Tuple[float, ...] = (1.0, 2.0, 4.0)
+
     def _download_and_cache(self, url: str, file_type: str) -> Tuple[Optional[str], str]:
         """Synchronously fetch an attachment URL and cache it locally.
 
-        Uses a short-lived urllib fetch to keep the converter synchronous and
-        testable; swap for the shared client if you need auth on media URLs.
+        Runs in a worker thread (see ``_handle_webhook``), so blocking retries
+        are safe. Uses a short-lived urllib fetch to keep the converter
+        synchronous and testable; swap for the shared client if you need auth
+        on media URLs.
         """
+        import time
         import urllib.request
 
-        with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310 (trusted Chatwoot URLs)
-            data = resp.read()
+        last_exc: Optional[Exception] = None
+        for attempt, delay in enumerate((0.0,) + self.ATTACHMENT_RETRY_DELAYS):
+            if delay:
+                time.sleep(delay)
+            try:
+                with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310 (trusted Chatwoot URLs)
+                    data = resp.read()
+                if attempt:
+                    logger.info(
+                        "[chatwoot] attachment fetch succeeded on retry %d: %s",
+                        attempt, _redact(url.rsplit("/", 1)[-1]),
+                    )
+                break
+            except Exception as exc:
+                last_exc = exc
+        else:
+            raise last_exc  # type: ignore[misc]
         if file_type == "image":
             return cache_image_from_bytes(data, ".jpg"), "image/jpeg"
         if file_type in ("audio", "voice"):
