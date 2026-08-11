@@ -23,8 +23,10 @@ import hmac
 import json
 import logging
 import os
+import time
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse, urlunparse
 
 try:
     import aiohttp
@@ -57,6 +59,12 @@ DEFAULT_WEBHOOK_PATH = "/chatwoot/webhook"
 DEFAULT_HEALTH_PATH = "/health"
 DEFAULT_MAX_BODY_BYTES = 1_000_000  # 1 MB webhook body cap (DoS guard)
 DEFAULT_MAX_SEEN_IDS = 5000
+
+# Inbound ActiveStorage fetches during the webhook can flake when Hermes and
+# Chatwoot share a host (hairpin to the public hostname). Retry + prefer
+# localhost rewrite before silently dropping empty-caption MMS.
+_ATTACHMENT_FETCH_ATTEMPTS = 3
+_ATTACHMENT_FETCH_BACKOFF_S = (0.4, 0.8)
 
 # Chatwoot has no hard message length, but very long single messages render
 # poorly in the agent inbox — chunk beyond this.
@@ -472,20 +480,7 @@ class ChatwootAdapter(BasePlatformAdapter):
         sender_id = str(sender.get("id") or "").strip() or None
         sender_name = sender.get("name") or sender.get("email") or None
 
-        media_urls: List[str] = []
-        media_types: List[str] = []
-        self._collect_attachments(payload, media_urls, media_types)
-
-        # 5. Empty content with no usable attachment — ignore.
-        if not text and not media_urls:
-            return None
-
-        chat_id = _format_chat_id(account_id, conversation_id)
-
-        # Inbox / channel awareness: Chatwoot inboxes differ in rendering —
-        # the web widget (Channel::Api) renders markdown, Twilio SMS inboxes
-        # deliver raw text. Remember the channel for send()-time formatting and
-        # surface it to the LLM via chat_topic.
+        # Inbox / channel awareness (needed for empty-drop logs and send formatting).
         inbox = payload.get("inbox") if isinstance(payload.get("inbox"), dict) else {}
         inbox_name = str(inbox.get("name") or "").strip()
         conversation = (
@@ -494,6 +489,31 @@ class ChatwootAdapter(BasePlatformAdapter):
             else {}
         )
         channel_type = str(conversation.get("channel") or "").strip()
+
+        media_urls: List[str] = []
+        media_types: List[str] = []
+        attachments = payload.get("attachments")
+        attachment_count = len(attachments) if isinstance(attachments, list) else 0
+        self._collect_attachments(payload, media_urls, media_types)
+
+        # 5. Empty content with no usable attachment — ignore (but never silently
+        # when the payload claimed attachments that failed to cache).
+        if not text and not media_urls:
+            logger.info(
+                "[chatwoot] dropping empty inbound (no text, no cached media) "
+                "id=%s channel=%s inbox=%s attachments_in_payload=%d",
+                self._message_id(payload),
+                channel_type or "unknown",
+                inbox_name or "unknown",
+                attachment_count,
+            )
+            return None
+
+        chat_id = _format_chat_id(account_id, conversation_id)
+
+        # Chatwoot inboxes differ in rendering — the web widget (Channel::Api)
+        # renders markdown, Twilio SMS inboxes deliver raw text. Remember the
+        # channel for send()-time formatting and surface it via chat_topic.
         if channel_type:
             self._remember_channel(chat_id, channel_type)
         chat_topic = None
@@ -534,30 +554,121 @@ class ChatwootAdapter(BasePlatformAdapter):
                 continue
             url = att.get("data_url") or att.get("file_url") or att.get("thumb_url")
             file_type = str(att.get("file_type") or "").strip().lower()
+            content_type = str(att.get("content_type") or "").strip().lower()
+            # Chatwoot may omit file_type but include content_type / extension.
+            if not content_type.startswith(("image/", "audio/")):
+                ext = str(att.get("extension") or "").strip().lower().lstrip(".")
+                if ext in {"png", "jpg", "jpeg", "gif", "webp", "bmp"}:
+                    content_type = f"image/{'jpeg' if ext in {'jpg', 'jpeg'} else ext}"
             if not url:
                 continue
             try:
-                path, media_type = self._download_and_cache(str(url), file_type)
-            except Exception:
-                logger.debug("[chatwoot] attachment fetch failed: %s", _redact(str(url)), exc_info=True)
+                path, media_type = self._download_and_cache(
+                    str(url), file_type, content_type=content_type
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[chatwoot] attachment fetch failed file_type=%s content_type=%s url=%s err=%s",
+                    file_type or "-",
+                    content_type or "-",
+                    _redact(str(url)),
+                    exc,
+                )
                 continue
             if path:
                 media_urls.append(path)
                 media_types.append(media_type)
 
-    def _download_and_cache(self, url: str, file_type: str) -> Tuple[Optional[str], str]:
-        """Synchronously fetch an attachment URL and cache it locally.
+    def _localhost_attachment_url(self, url: str) -> Optional[str]:
+        """Rewrite same-host ActiveStorage URLs to http://127.0.0.1 (avoid hairpin)."""
+        if not self._base_url:
+            return None
+        try:
+            base = urlparse(self._base_url)
+            parsed = urlparse(url)
+        except Exception:
+            return None
+        if not parsed.hostname or not base.hostname:
+            return None
+        if parsed.hostname.lower() != base.hostname.lower():
+            return None
+        if parsed.hostname.lower() in {"127.0.0.1", "localhost"}:
+            return None
+        return urlunparse(
+            ("http", "127.0.0.1", parsed.path, parsed.params, parsed.query, parsed.fragment)
+        )
 
-        Uses a short-lived urllib fetch to keep the converter synchronous and
-        testable; swap for the shared client if you need auth on media URLs.
-        """
+    def _attachment_fetch_urls(self, url: str) -> List[str]:
+        """Ordered fetch candidates: localhost rewrite first, then the original URL."""
+        out: List[str] = []
+        local = self._localhost_attachment_url(url)
+        if local:
+            out.append(local)
+        if url not in out:
+            out.append(url)
+        return out
+
+    @staticmethod
+    def _effective_attachment_kind(file_type: str, content_type: str) -> str:
+        """Normalize Chatwoot file_type / content_type into image|audio|other."""
+        ft = (file_type or "").strip().lower()
+        ct = (content_type or "").strip().lower()
+        if ft == "image" or ct.startswith("image/"):
+            return "image"
+        if ft in ("audio", "voice") or ct.startswith("audio/"):
+            return "audio"
+        return ft or "file"
+
+    def _download_and_cache(
+        self,
+        url: str,
+        file_type: str,
+        content_type: str = "",
+    ) -> Tuple[Optional[str], str]:
+        """Fetch an attachment URL and cache it locally (retries + localhost prefer)."""
+        last_exc: Optional[BaseException] = None
+        candidates = self._attachment_fetch_urls(url)
+        for attempt in range(_ATTACHMENT_FETCH_ATTEMPTS):
+            for candidate in candidates:
+                try:
+                    return self._download_and_cache_once(candidate, file_type, content_type)
+                except Exception as exc:
+                    last_exc = exc
+                    logger.debug(
+                        "[chatwoot] attachment attempt %d/%d failed url=%s: %s",
+                        attempt + 1,
+                        _ATTACHMENT_FETCH_ATTEMPTS,
+                        _redact(candidate),
+                        exc,
+                    )
+            if attempt < _ATTACHMENT_FETCH_ATTEMPTS - 1:
+                delay = _ATTACHMENT_FETCH_BACKOFF_S[
+                    min(attempt, len(_ATTACHMENT_FETCH_BACKOFF_S) - 1)
+                ]
+                time.sleep(delay)
+        assert last_exc is not None
+        raise last_exc
+
+    def _download_and_cache_once(
+        self,
+        url: str,
+        file_type: str,
+        content_type: str = "",
+    ) -> Tuple[Optional[str], str]:
+        """Single-shot urllib fetch + local cache."""
         import urllib.request
 
         with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310 (trusted Chatwoot URLs)
             data = resp.read()
-        if file_type == "image":
+            resp_ctype = ""
+            try:
+                resp_ctype = str(resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            except Exception:
+                resp_ctype = ""
+        kind = self._effective_attachment_kind(file_type, content_type or resp_ctype)
+        if kind == "image":
             return cache_image_from_bytes(data, ".jpg"), "image/jpeg"
-        if file_type in ("audio", "voice"):
+        if kind == "audio":
             return cache_audio_from_bytes(data, ".ogg"), "audio/ogg"
         filename = url.rsplit("/", 1)[-1] or "attachment"
         return cache_document_from_bytes(data, filename), "application/octet-stream"
