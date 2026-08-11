@@ -10012,10 +10012,18 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
         _msg_preview = (event.text or "")[:80].replace("\n", " ")
         _reply_id = getattr(event, "reply_to_message_id", None)
         _reply_txt = (getattr(event, "reply_to_text", None) or "")[:80].replace("\n", " ")
+        _mtype = getattr(event, "message_type", None)
+        _mtype_name = getattr(_mtype, "value", None) or getattr(_mtype, "name", None) or str(_mtype)
+        _media_urls = getattr(event, "media_urls", None) or []
+        _media_types = getattr(event, "media_types", None) or []
         logger.info(
-            "inbound message: platform=%s user=%s chat=%s msg=%r reply_to_id=%s reply_to_text=%r",
-            _platform_name, source.user_name or source.user_id or "unknown",
-            source.chat_id or "unknown", _msg_preview, _reply_id, _reply_txt,
+            "inbound message: platform=%s type=%s user=%s user_id=%s chat=%s msg_id=%s "
+            "msg=%r media=%d media_types=%s reply_to_id=%s reply_to_text=%r",
+            _platform_name, _mtype_name,
+            source.user_name or "unknown", source.user_id or "unknown",
+            source.chat_id or "unknown", getattr(event, "message_id", None),
+            _msg_preview, len(_media_urls), _media_types or "[]",
+            _reply_id, _reply_txt,
         )
 
         # Get or create session
