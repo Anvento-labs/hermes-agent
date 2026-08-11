@@ -497,6 +497,33 @@ class TestWebhookHandler:
         assert len(dispatched) == 1  # second is a dedup no-op
 
     @pytest.mark.asyncio
+    async def test_early_message_updated_does_not_poison_dedup(self, monkeypatch):
+        """MMS race: message_updated (same id) may arrive BEFORE message_created.
+
+        Chatwoot fires both events for one incoming attachment message and
+        delivery order is not guaranteed. The updated event must not consume
+        the dedup slot and silently drop the real created event.
+        """
+        a = _make_adapter()
+        dispatched = []
+
+        async def _fake_handle(event):
+            dispatched.append(event)
+
+        monkeypatch.setattr(a, "handle_message", _fake_handle)
+        updated = _msg_created(id=888)
+        updated["event"] = "message_updated"
+        r1 = await a._handle_webhook(_FakeRequest(json.dumps(updated).encode()))
+        r2 = await a._handle_webhook(
+            _FakeRequest(json.dumps(_msg_created(id=888)).encode())
+        )
+        import asyncio
+
+        await asyncio.sleep(0)
+        assert r1.status == 200 and r2.status == 200
+        assert len(dispatched) == 1  # created still dispatched after updated
+
+    @pytest.mark.asyncio
     async def test_non_actionable_not_dispatched(self, monkeypatch):
         a = _make_adapter()
         dispatched = []
