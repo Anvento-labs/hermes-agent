@@ -438,9 +438,16 @@ class ChatwootAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _message_id(payload: Dict[str, Any]) -> Optional[str]:
+        # Key on event type + id: Chatwoot fires message_created AND
+        # message_updated for the same message id (e.g. an MMS gets updated
+        # with image dimensions right after creation), and webhook delivery
+        # order is not guaranteed. A bare id key would let an early
+        # message_updated poison the dedup set and silently drop the real
+        # message_created that follows.
         val = payload.get("id")
         if val is not None and str(val).strip():
-            return f"msg:{val}"
+            event = str(payload.get("event") or "").strip() or "unknown"
+            return f"msg:{event}:{val}"
         return None
 
     # -- inbound: payload → MessageEvent -------------------------------------
@@ -539,7 +546,7 @@ class ChatwootAdapter(BasePlatformAdapter):
             try:
                 path, media_type = self._download_and_cache(str(url), file_type)
             except Exception:
-                logger.debug("[chatwoot] attachment fetch failed: %s", _redact(str(url)), exc_info=True)
+                logger.warning("[chatwoot] attachment fetch failed: %s", _redact(str(url)), exc_info=True)
                 continue
             if path:
                 media_urls.append(path)
