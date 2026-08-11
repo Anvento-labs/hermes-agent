@@ -519,7 +519,11 @@ class TestWebhookHandler:
 class TestAttachments:
     def test_inbound_image_cached(self, monkeypatch):
         a = _make_adapter()
-        monkeypatch.setattr(a, "_download_and_cache", lambda url, ft: ("/tmp/x.jpg", "image/jpeg"))
+        monkeypatch.setattr(
+            a,
+            "_download_and_cache",
+            lambda url, ft, content_type="": ("/tmp/x.jpg", "image/jpeg"),
+        )
         payload = _msg_created(attachments=[{"file_type": "image", "data_url": "https://x/p.png"}])
         ev = a._convert(payload)
         assert ev is not None
@@ -529,13 +533,122 @@ class TestAttachments:
     def test_inbound_attachment_failure_still_yields_text(self, monkeypatch):
         a = _make_adapter()
 
-        def _boom(url, ft):
+        def _boom(url, ft, content_type=""):
             raise RuntimeError("network")
 
         monkeypatch.setattr(a, "_download_and_cache", _boom)
         payload = _msg_created(attachments=[{"file_type": "image", "data_url": "https://x/p.png"}])
         ev = a._convert(payload)
         assert ev is not None and ev.text == "hello there" and ev.media_urls == []
+
+    def test_empty_caption_mms_fetch_failure_drops_with_log(self, monkeypatch, caplog):
+        """SMS receipt with empty content + failed cache must not be a silent None."""
+        import logging
+
+        a = _make_adapter()
+
+        def _boom(url, ft, content_type=""):
+            raise RuntimeError("hairpin timeout")
+
+        monkeypatch.setattr(a, "_download_and_cache", _boom)
+        payload = _msg_created(
+            content="",
+            attachments=[{"file_type": "image", "data_url": "https://cw.example.com/rails/active_storage/blobs/x"}],
+            conversation={"id": 42, "channel": "Channel::TwilioSms"},
+            inbox={"name": "SMS"},
+        )
+        with caplog.at_level(logging.INFO):
+            assert a._convert(payload) is None
+        assert any("dropping empty inbound" in r.message for r in caplog.records)
+        assert any("attachment fetch failed" in r.message for r in caplog.records)
+
+    def test_empty_caption_mms_success_yields_photo(self, monkeypatch):
+        a = _make_adapter()
+        monkeypatch.setattr(
+            a,
+            "_download_and_cache",
+            lambda url, ft, content_type="": ("/tmp/receipt.jpg", "image/jpeg"),
+        )
+        payload = _msg_created(
+            content="",
+            attachments=[{"file_type": "image", "data_url": "https://cw.example.com/rails/active_storage/blobs/x"}],
+            conversation={"id": 42, "channel": "Channel::TwilioSms"},
+        )
+        ev = a._convert(payload)
+        assert ev is not None
+        assert ev.text == ""
+        assert ev.media_urls == ["/tmp/receipt.jpg"]
+        assert ev.message_type.name == "PHOTO"
+
+    def test_content_type_image_without_file_type(self, monkeypatch):
+        a = _make_adapter()
+        seen = {}
+
+        def _cache(url, ft, content_type=""):
+            seen["ft"] = ft
+            seen["ct"] = content_type
+            return ("/tmp/x.jpg", "image/jpeg")
+
+        monkeypatch.setattr(a, "_download_and_cache", _cache)
+        payload = _msg_created(
+            content="",
+            attachments=[{
+                "data_url": "https://cw.example.com/blob",
+                "content_type": "image/jpeg",
+                "extension": "jpeg",
+            }],
+        )
+        ev = a._convert(payload)
+        assert ev is not None and ev.media_urls == ["/tmp/x.jpg"]
+        assert seen["ct"].startswith("image/")
+
+    def test_localhost_rewrite_for_same_host_activestorage(self):
+        a = _make_adapter(base_url="https://support.joincrwd.com")
+        url = "https://support.joincrwd.com/rails/active_storage/blobs/redirect/abc/receipt.jpg"
+        assert a._localhost_attachment_url(url) == (
+            "http://127.0.0.1/rails/active_storage/blobs/redirect/abc/receipt.jpg"
+        )
+        assert a._attachment_fetch_urls(url)[0].startswith("http://127.0.0.1/")
+        assert a._attachment_fetch_urls(url)[1] == url
+        # Foreign host: no rewrite
+        other = "https://cdn.example.com/blob"
+        assert a._localhost_attachment_url(other) is None
+        assert a._attachment_fetch_urls(other) == [other]
+
+    def test_download_retries_then_succeeds(self, monkeypatch):
+        a = _make_adapter(base_url="https://cw.example.com")
+        calls = {"n": 0}
+
+        def _once(url, file_type, content_type=""):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RuntimeError(f"fail-{calls['n']}")
+            return ("/tmp/ok.jpg", "image/jpeg")
+
+        monkeypatch.setattr(a, "_download_and_cache_once", _once)
+        monkeypatch.setattr(cw.time, "sleep", lambda _s: None)
+        path, media_type = a._download_and_cache(
+            "https://cw.example.com/rails/active_storage/blobs/x",
+            "image",
+        )
+        assert path == "/tmp/ok.jpg" and media_type == "image/jpeg"
+        # localhost candidate + original per attempt until success on attempt 2
+        assert calls["n"] >= 3
+
+    def test_outgoing_agent_upload_still_ignored(self, monkeypatch):
+        a = _make_adapter()
+        monkeypatch.setattr(
+            a,
+            "_download_and_cache",
+            lambda url, ft, content_type="": ("/tmp/x.jpg", "image/jpeg"),
+        )
+        payload = _msg_created(
+            message_type="outgoing",
+            content="",
+            attachments=[{"file_type": "image", "data_url": "https://cw.example.com/blob"}],
+            sender={"id": 1, "type": "user", "name": "Agent"},
+        )
+        assert a._convert(payload) is None
 
     @pytest.mark.asyncio
     async def test_outbound_multipart_builds_attachments_field(self, tmp_path):
