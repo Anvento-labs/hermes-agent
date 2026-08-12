@@ -535,8 +535,11 @@ def interruptible_api_call(agent, api_kwargs: dict):
                 )
             try:
                 if agent.api_mode == "anthropic_messages":
-                    agent._anthropic_client.close()
-                    agent._rebuild_anthropic_client()
+                    # Socket-level abort only: close() from this watchdog
+                    # thread races the worker's live connection (#29507).
+                    # Owner thread rebuilds on next request via the flag.
+                    agent._force_close_tcp_sockets(agent._anthropic_client)
+                    agent._anthropic_client_needs_rebuild = True
                 else:
                     _close_request_client_once("stale_call_kill")
             except Exception:
@@ -574,8 +577,10 @@ def interruptible_api_call(agent, api_kwargs: dict):
             # seed future retries.
             try:
                 if agent.api_mode == "anthropic_messages":
-                    agent._anthropic_client.close()
-                    agent._rebuild_anthropic_client()
+                    # Socket-level abort only; rebuilding here races the
+                    # InterruptedError unwind. Owner thread rebuilds next.
+                    agent._force_close_tcp_sockets(agent._anthropic_client)
+                    agent._anthropic_client_needs_rebuild = True
                 else:
                     _close_request_client_once("interrupt_abort")
             except Exception:

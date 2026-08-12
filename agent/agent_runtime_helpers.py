@@ -972,13 +972,11 @@ def try_recover_primary_transport(
         agent.api_key = rt["api_key"]
 
         if agent.api_mode == "anthropic_messages":
-            from agent.anthropic_adapter import build_anthropic_client
             agent._anthropic_api_key = rt["anthropic_api_key"]
             agent._anthropic_base_url = rt["anthropic_base_url"]
-            agent._anthropic_client = build_anthropic_client(
-                rt["anthropic_api_key"], rt["anthropic_base_url"],
-                timeout=get_provider_request_timeout(agent.provider, agent.model),
-            )
+            # Delegate: Bedrock needs AnthropicBedrock (SigV4), not an
+            # unsigned plain Anthropic client.
+            agent._rebuild_anthropic_client()
             agent._is_anthropic_oauth = rt["is_anthropic_oauth"]
             agent.client = None
         else:
@@ -1144,13 +1142,11 @@ def restore_primary_runtime(agent) -> bool:
 
         # ── Rebuild client for the primary provider ──
         if agent.api_mode == "anthropic_messages":
-            from agent.anthropic_adapter import build_anthropic_client
             agent._anthropic_api_key = rt["anthropic_api_key"]
             agent._anthropic_base_url = rt["anthropic_base_url"]
-            agent._anthropic_client = build_anthropic_client(
-                rt["anthropic_api_key"], rt["anthropic_base_url"],
-                timeout=get_provider_request_timeout(agent.provider, agent.model),
-            )
+            # Delegate so Bedrock gets AnthropicBedrock (SigV4) instead of
+            # an unsigned plain Anthropic client.
+            agent._rebuild_anthropic_client()
             agent._is_anthropic_oauth = rt["is_anthropic_oauth"]
             agent.client = None
         else:
