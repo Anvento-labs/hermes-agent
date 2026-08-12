@@ -18,8 +18,9 @@ tool's direct-Chatwoot-API style:
      ``enrichment.fetch_user`` — enrichment is fire-and-forget, so the attribute
      may not be populated on the very first message.
   4. Cache the result per contact id (short TTL) to keep it to one lookup.
-  5. Best-effort profile location (city/state/country/postal_code) via
-     ``fetch_user_profile``, also cached, injected as authoritative.
+  5. Best-effort profile location (city/state/country/postal_code), date of
+     birth, and gender via ``fetch_user_profile``, also cached. Location is
+     injected as authoritative vs Honcho/memory.
 
 Best-effort throughout: any failure returns ``None`` and the coach falls back to
 today's ``get_user`` path.
@@ -122,8 +123,11 @@ _CACHE_TTL_S = 600.0
 _CACHE_MAX = 2048
 # contact_id -> (crwd_user_id_or_None, monotonic_ts)
 _cache: "OrderedDict[str, Tuple[Optional[str], float]]" = OrderedDict()
-# crwd_user_id -> (location_dict_or_None, monotonic_ts)
+# crwd_user_id -> (profile_dict_or_None, monotonic_ts)
+# Profile dict holds non-empty city/state/country/postal_code plus dob/gender.
 _location_cache: "OrderedDict[str, Tuple[Optional[Dict[str, str]], float]]" = OrderedDict()
+
+_LOCATION_KEYS = ("city", "state", "country", "postal_code")
 
 
 # --- Chatwoot creds / platform gate -----------------------------------------
@@ -212,11 +216,16 @@ def _location_cache_put(crwd_id: str, value: Optional[Dict[str, str]]) -> None:
         _location_cache.popitem(last=False)
 
 
+def _location_from_profile(profile: Dict[str, str]) -> Dict[str, str]:
+    """City/state/ZIP/country subset of a member profile dict."""
+    return {k: profile[k] for k in _LOCATION_KEYS if profile.get(k)}
+
+
 def _fetch_member_location(crwd_id: str) -> Optional[Dict[str, str]]:
-    """Load city/state/country/postal_code for ``crwd_id`` from CRWD Mongo.
+    """Load location, dob, and gender for ``crwd_id`` from CRWD Mongo.
 
     Returns a dict of non-empty fields, an empty dict when the user exists but
-    has no location on file, or ``None`` on lookup failure.
+    has none of those fields on file, or ``None`` on lookup failure.
     """
     crwd_id = str(crwd_id or "").strip()
     if not crwd_id:
@@ -226,16 +235,23 @@ def _fetch_member_location(crwd_id: str) -> Optional[Dict[str, str]]:
         return cached
     result: Optional[Dict[str, str]] = None
     try:
+        from tools.crwd_db.serialize import _normalize_dob
         from tools.crwd_db_tool import fetch_user_profile
 
         profile = fetch_user_profile(crwd_id)
         if profile.get("success") and isinstance(profile.get("user"), dict):
             user = profile["user"]
             loc: Dict[str, str] = {}
-            for key in ("city", "state", "country", "postal_code"):
+            for key in _LOCATION_KEYS:
                 val = str(user.get(key) or "").strip()
                 if val:
                     loc[key] = val
+            dob = _normalize_dob(user.get("dob"))
+            if dob:
+                loc["dob"] = dob
+            gender = str(user.get("gender") or "").strip()
+            if gender:
+                loc["gender"] = gender
             result = loc
     except Exception as exc:
         logger.debug("[crwd-coach-ctx] location lookup failed for %s: %s", crwd_id, exc)
@@ -485,22 +501,37 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
                 "chat if comparing to something you already showed."
             ),
         ]
-        loc = _fetch_member_location(crwd_id)
-        if loc:
-            lines.append(
-                f"- Profile location (authoritative from CRWD DB — ignore Honcho/"
-                f"memory if they disagree): {_format_profile_location(loc)}."
-            )
-            lines.append(
-                "- For store finding or local asks: use this city/ZIP. Call get_user "
-                "only if you need other profile fields."
-            )
-        elif loc is not None:
-            # Empty dict — user found, no location fields.
-            lines.append(
-                "- Profile has no city/ZIP on file — ask the member before searching "
-                "for a store. Do not guess from Honcho or memory."
-            )
+        profile = _fetch_member_location(crwd_id)
+        if profile is not None:
+            loc = _location_from_profile(profile)
+            if loc:
+                lines.append(
+                    f"- Profile location (authoritative from CRWD DB — ignore Honcho/"
+                    f"memory if they disagree): {_format_profile_location(loc)}."
+                )
+                lines.append(
+                    "- For store finding or local asks: use this city/ZIP. Call get_user "
+                    "only if you need other profile fields."
+                )
+            else:
+                lines.append(
+                    "- Profile has no city/ZIP on file — ask the member before searching "
+                    "for a store. Do not guess from Honcho or memory."
+                )
+            dob = (profile.get("dob") or "").strip()
+            if dob:
+                from tools.crwd_db.serialize import _age_from_dob
+
+                age = _age_from_dob(dob)
+                if age is not None:
+                    lines.append(
+                        f"- Profile date of birth (YYYY-MM-DD): {dob} (age {age})."
+                    )
+                else:
+                    lines.append(f"- Profile date of birth (YYYY-MM-DD): {dob}.")
+            gender = (profile.get("gender") or "").strip()
+            if gender:
+                lines.append(f"- Profile gender: {gender}.")
         if cross_user:
             lines.extend([
                 "- The user is asking about another member's account.",

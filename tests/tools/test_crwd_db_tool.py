@@ -220,6 +220,78 @@ class TestCustomQueryGuardrails:
         assert out["user"]["city"] == "Austin"
         assert "address" not in out["user"]
 
+    def test_user_fields_include_dob_and_gender(self):
+        assert t._USER_FIELDS.get("dob") == 1
+        assert t._USER_FIELDS.get("gender") == 1
+
+    def test_get_user_returns_normalized_dob_and_gender(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        from datetime import datetime
+
+        coll = MagicMock()
+        coll.find_one.return_value = {
+            "_id": "abc",
+            "dob": datetime(1998, 12, 20),
+            "gender": "female",
+        }
+        with patch.object(t.connection, "_db", return_value=_fake_db({"users": coll})):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user", "identifier": "abc",
+            }))
+        assert out["items"][0]["dob"] == "1998-12-20"
+        assert out["items"][0]["gender"] == "female"
+        proj = coll.find_one.call_args.args[1]
+        assert proj.get("dob") == 1
+        assert proj.get("gender") == 1
+
+    def test_get_user_drops_unparseable_dob(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        coll = MagicMock()
+        coll.find_one.return_value = {"_id": "abc", "dob": "not-a-date", "city": "Austin"}
+        with patch.object(t.connection, "_db", return_value=_fake_db({"users": coll})):
+            out = json.loads(t.crwd_db_tool({
+                "action": "get_user", "identifier": "abc",
+            }))
+        assert "dob" not in out["items"][0]
+        assert out["items"][0]["city"] == "Austin"
+
+    def test_fetch_user_profile_includes_dob_and_gender(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        with patch("tools.crwd_db.prefetch._get_user", return_value=json.dumps({
+            "_type": "user",
+            "items": [{
+                "_id": "abc",
+                "dob": "12/20/1998",
+                "gender": "female",
+            }],
+            "error": None,
+        })):
+            out = t.fetch_user_profile("abc")
+        assert out["success"] is True
+        assert out["user"]["dob"] == "1998-12-20"
+        assert out["user"]["gender"] == "female"
+
+
+class TestNormalizeDob:
+    def test_iso_and_datetime_and_slash(self):
+        from datetime import date, datetime
+
+        from tools.crwd_db.serialize import _age_from_dob, _normalize_dob
+
+        assert _normalize_dob("1998-12-20") == "1998-12-20"
+        assert _normalize_dob(datetime(1998, 12, 20, 8, 30)) == "1998-12-20"
+        assert _normalize_dob(date(1998, 12, 20)) == "1998-12-20"
+        assert _normalize_dob("12/20/1998") == "1998-12-20"
+        assert _normalize_dob("1998/12/20") == "1998-12-20"
+        assert _normalize_dob("1998-12-20T00:00:00.000Z") == "1998-12-20"
+        assert _normalize_dob({"$date": "1998-12-20T00:00:00.000Z"}) == "1998-12-20"
+        assert _normalize_dob("not-a-date") is None
+        assert _normalize_dob("") is None
+        assert _normalize_dob(None) is None
+        assert _age_from_dob("1998-12-20", today=date(2026, 8, 12)) == 27
+        assert _age_from_dob("1998-12-20", today=date(1998, 12, 19)) is None
+        assert _age_from_dob("bogus") is None
+
 
 class TestNewUserActions:
     @pytest.mark.parametrize("action", [

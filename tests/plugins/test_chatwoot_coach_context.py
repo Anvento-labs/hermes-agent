@@ -113,6 +113,43 @@ class TestLocationHelpers:
         ):
             assert cc._fetch_member_location("abc123") == {}
 
+    def test_fetch_member_location_maps_dob_and_gender(self, chatwoot_env):
+        with patch(
+            "tools.crwd_db_tool.fetch_user_profile",
+            return_value={
+                "success": True,
+                "user": {
+                    "city": "Austin",
+                    "dob": "12/20/1998",
+                    "gender": "female",
+                    "email": "a@b.com",
+                },
+            },
+        ):
+            loc = cc._fetch_member_location("abc123")
+        assert loc == {
+            "city": "Austin",
+            "dob": "1998-12-20",
+            "gender": "female",
+        }
+
+    def test_fetch_member_location_omits_unparseable_dob(self, chatwoot_env):
+        with patch(
+            "tools.crwd_db_tool.fetch_user_profile",
+            return_value={
+                "success": True,
+                "user": {"dob": "not-a-date", "gender": "  "},
+            },
+        ):
+            assert cc._fetch_member_location("abc123") == {}
+
+    def test_location_from_profile_strips_dob_gender(self):
+        assert cc._location_from_profile({
+            "city": "Austin",
+            "dob": "1998-12-20",
+            "gender": "female",
+        }) == {"city": "Austin"}
+
 
 class TestHook:
     def test_injects_context_when_resolved(self, chatwoot_env):
@@ -159,6 +196,43 @@ class TestHook:
         assert out is not None
         assert "no city/ZIP on file" in out["context"]
         assert "Do not guess from Honcho" in out["context"]
+        assert "Profile date of birth" not in out["context"]
+        assert "Profile gender" not in out["context"]
+
+    def test_injects_dob_age_and_gender_when_present(self, chatwoot_env):
+        from datetime import date
+
+        from tools.crwd_db.serialize import _age_from_dob
+
+        dob = "1998-12-20"
+        age = _age_from_dob(dob, today=date.today())
+        profile = {
+            "city": "Austin",
+            "state": "TX",
+            "postal_code": "78701",
+            "country": "US",
+            "dob": dob,
+            "gender": "female",
+        }
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=profile
+        ):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert f"Profile date of birth (YYYY-MM-DD): {dob} (age {age})." in out["context"]
+        assert "Profile gender: female." in out["context"]
+        assert "Austin, TX, 78701, US" in out["context"]
+
+    def test_injects_dob_without_age_when_uncomputable(self, chatwoot_env):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value={"dob": "1998-12-20"}
+        ), patch("tools.crwd_db.serialize._age_from_dob", return_value=None):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert "Profile date of birth (YYYY-MM-DD): 1998-12-20." in out["context"]
+        assert "(age " not in out["context"]
+        assert "no city/ZIP on file" in out["context"]
+        assert "Profile gender" not in out["context"]
 
     def test_none_off_chatwoot(self, chatwoot_env):
         with patch.object(cc, "_is_chatwoot", return_value=False):

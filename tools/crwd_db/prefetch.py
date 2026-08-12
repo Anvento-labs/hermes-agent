@@ -12,6 +12,7 @@ from tools.crwd_db.membership import (
     _get_user_gigs,
     _get_waitlisted_gigs,
 )
+from tools.crwd_db.serialize import _normalize_dob
 from tools.crwd_db.users import _get_user
 
 def _parse_tool_payload(raw: str) -> Dict[str, Any]:
@@ -78,6 +79,8 @@ def fetch_user_profile(user_id: str) -> Dict[str, Any]:
             "state": user.get("state"),
             "country": user.get("country"),
             "postal_code": user.get("postal_code"),
+            "dob": _normalize_dob(user.get("dob")),
+            "gender": user.get("gender"),
         },
     }
 

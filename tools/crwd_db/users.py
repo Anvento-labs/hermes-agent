@@ -9,7 +9,7 @@ from tools.registry import tool_error
 
 from tools.crwd_db import connection as _conn
 from tools.crwd_db.connection import _COLL_USERS, _MAX_TIME_MS, _USER_FIELDS, _oid
-from tools.crwd_db.serialize import _serialize_doc
+from tools.crwd_db.serialize import _normalize_dob, _serialize_doc
 
 def _get_user(identifier: str) -> str:
     identifier = (identifier or "").strip()
@@ -25,6 +25,12 @@ def _get_user(identifier: str) -> str:
         query = {"phone": identifier}
 
     user = _conn._db()[_COLL_USERS].find_one(query, _USER_FIELDS, max_time_ms=_MAX_TIME_MS)
+    if user:
+        dob = _normalize_dob(user.get("dob"))
+        if dob:
+            user["dob"] = dob
+        else:
+            user.pop("dob", None)
     return json.dumps(
         {"_type": "user", "items": [_serialize_doc(user)] if user else [], "error": None},
         ensure_ascii=False,
