@@ -4403,6 +4403,17 @@ class AIAgent:
         return pool.has_available()
 
     def _anthropic_messages_create(self, api_kwargs: dict):
+        # Deferred rebuild after a watchdog-thread socket abort (interrupt /
+        # stale-call kill): close+rebuild must happen here, on the thread
+        # that owns the client, never on the aborting thread.
+        if getattr(self, "_anthropic_client_needs_rebuild", False):
+            try:
+                if self._anthropic_client is not None:
+                    self._anthropic_client.close()
+            except Exception:
+                pass
+            self._rebuild_anthropic_client()
+            self._anthropic_client_needs_rebuild = False
         if self.api_mode == "anthropic_messages":
             self._try_refresh_anthropic_client_credentials()
         # Defensive: strip Responses-only kwargs that can leak in under an
