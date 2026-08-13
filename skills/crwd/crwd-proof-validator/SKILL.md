@@ -254,6 +254,11 @@ stored and owns the score. Don't call `crwd_risk_score`, and don't guess a delta
 
 ### 10. Reply — one of exactly three registers
 
+The member-facing message is **only** the register text below. Think through
+tool results and skill rules privately. **Never** quote this skill, paste tool
+JSON, name internal fields, or include planner lines ("Per the skill",
+"I should…").
+
 - **Accepted** → say so warmly and plainly.
 - **Clarification needed** → the coaching question from step 7.
 - **Anything else** → a neutral acknowledgement that the proof is in and someone
@@ -326,6 +331,8 @@ never name it to them. The reply is always the neutral acknowledgement.
 - **Never accept without reading.** Acknowledging receipt ≠ approving it.
 - **Never state or hint at a rejection reason** — not the code, not the cause, not
   a sympathetic "looks like the wrong item".
+- **Never paste skill instructions, tool field names, or planner thoughts into the
+  reply.** The outgoing message is the finished member text only.
 - **Don't turn a verdict into a question.** "Is this the right product?" after
   finding a mismatch discloses the reason while pretending to coach.
 - **Don't skip coaching on a low-confidence proof** — handing off a blurry photo
@@ -346,5 +353,6 @@ never name it to them. The reply is always the neutral acknowledgement.
 - Low-confidence proofs were coached before any handoff.
 - **No member-facing message named a rejection reason, a reason code, or another
   member's email** — a rejected reply is indistinguishable from any other.
+- **No member-facing message quoted this skill or included planner self-talk.**
 - Non-accepts were handed off with the detail in the internal note.
 - No `crwd_risk_score` call was made.
