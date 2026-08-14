@@ -26,8 +26,10 @@ verbatim rather than lowercasing it yourself.
 
 ## Open it
 
-`browser_navigate` if available, else `web_extract`. **Never approve a link you
-could not open** — "trust me, it's there" is `needs_human`, not an accept.
+`browser_navigate` if available, else `web_extract`. Open the link yourself.
+A member saying the post exists, is public, or shows the product is **not
+evidence** — only what you loaded counts. If you could not open it, do not
+accept. Coach once for a public / full URL, then `needs_human`.
 
 ## Extract
 

@@ -162,9 +162,8 @@ and let the labeler tag it — it classifies `scam` itself from the message, so 
 don't need to apply that label; just set the band.
 
 Be conservative. A confused member pasting a weird link is not a scammer; a member
-asking an unrelated / non-CRWD question is not fraud. Score this when you'd be
-comfortable defending it to the member's face — you won't have to, which is exactly
-why the bar is high.
+asking an unrelated / non-CRWD question is not channel abuse. Score this only when
+you'd be comfortable defending it to the member's face.
 
 ## Pitfalls
 
@@ -173,7 +172,7 @@ why the bar is high.
 - **Never score the same proof twice.** Delta-only + no history means a double
   score is invisible and permanent. `risk_scored` is the only guard.
 - **Don't score `clean_match` or coaching outcomes.** Blurry photos, missing links,
-  and incomplete submissions are not fraud.
+  and incomplete submissions are not risk.
 - **Don't pass an absolute score** to `crwd_risk_score` — it takes an increment.
 - **Don't merge band labels** — `replace: true` with the full set, or the
   conversation accumulates every band the member has ever been in.

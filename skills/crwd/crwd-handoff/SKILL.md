@@ -1,7 +1,7 @@
 ---
 name: crwd-handoff
-description: "Hand a CRWD conversation to a human — for frustration/anger, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or out-of-scope-but-relevant questions. Answer routine payment-status/history questions with crwd-payment-status first — don't hand those off. Use whenever you're unsure it's safe to answer."
-version: 1.0.0
+description: "Hand a CRWD conversation to a human — for frustration/anger, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or out-of-scope-but-relevant questions. Answer routine payment-status/history with crwd-payment-status first, and app/profile how-tos (theme, dark mode, phone via OTP, DOB, nav) with crwd-application-expert first — don't hand those off. Use whenever you're unsure it's safe to answer."
+version: 1.0.1
 metadata:
   hermes:
     tags: [crwd, handoff, escalate, human, frustrated, angry, dispute, rejected, ticket]
@@ -28,7 +28,7 @@ show up:
   human's job (`skill_view("crwd-reference", "references/proof-requirements.md")`).
 - **Money / account** — **answer payment questions first, don't reflexively hand off.**
   "Did I get paid?", "when will I be paid?", "where's my money?", and "show my payment
-  history" are now answerable with `crwd-payment-status` (the `dot` tool + `crwd_db`
+  history" are  answerable with `crwd-payment-status` (the `dot` tool + `crwd_db`
   approval state). Use it. Only hand off for a **genuine dispute or account action** you
   can't resolve: Dot shows the payout **sent but the member never received it**, a refund/
   chargeback request, a wrong/missing amount you can't explain from the data, or account

@@ -968,7 +968,7 @@ class TestStoreProof:
         assert doc["proof_id"] == "REC# 2-6177-0190-0173-4723-7"
         assert doc["normalized_proof_id"] == "261770190017347237"
         assert doc["user_email"] == "a@example.com"
-        assert doc["created_by"] == "hermes"
+        assert "created_by" not in doc
 
     def test_accept_round_trips_its_reason(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
