@@ -28,7 +28,7 @@ show up:
   human's job (`skill_view("crwd-reference", "references/proof-requirements.md")`).
 - **Money / account** — **answer payment questions first, don't reflexively hand off.**
   "Did I get paid?", "when will I be paid?", "where's my money?", and "show my payment
-  history" are now answerable with `crwd-payment-status` (the `dot` tool + `crwd_db`
+  history" are  answerable with `crwd-payment-status` (the `dot` tool + `crwd_db`
   approval state). Use it. Only hand off for a **genuine dispute or account action** you
   can't resolve: Dot shows the payout **sent but the member never received it**, a refund/
   chargeback request, a wrong/missing amount you can't explain from the data, or account
