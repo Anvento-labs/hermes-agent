@@ -1,7 +1,7 @@
 ---
 name: crwd-application-expert
-description: "Expert on CRWD app UI — Home/My Gigs, Explore, Profile, and header controls. Use when a member asks how to use the app, where to find gigs/settings, theme, notifications, or how to open a gig."
-version: 1.1.0
+description: "Expert on CRWD app UI — Home/My Gigs, Explore, Profile, header. Use for how to use the app, where to find gigs/settings, how to open a gig, how to change theme / dark mode / light mode, notifications, logout, support, or how to change phone (via OTP), DOB, or other profile fields. Never answer these from general knowledge — load this skill first."
+version: 1.1.2
 metadata:
   hermes:
     tags: [crwd, app, application, navigation, home, explore, my-gigs, profile, ui, how-to, where, theme, notifications, settings]
@@ -73,7 +73,8 @@ Open via the **profile picture** in the header.
 - View fields: **Email**, **Phone** (Verified badge, or **Verify** via SMS OTP), **Location**,
   **Date of Birth**, **Gender**, **Socials** (linked accounts or —)
 - **Edit profile** sections:
-  - Personal — first/last name, phone (changing phone needs SMS verification), DOB, gender, bio
+  - Personal — first/last name, phone (self-serve: Edit profile → Save → SMS OTP on the
+    new number), DOB, gender, bio
   - Location — city, state, country, postal code (this is how they set/update location)
   - Social links (optional) — Instagram, Twitter/X, TikTok URLs
 - **Identity** banner:
@@ -96,6 +97,7 @@ Open via the **profile picture** in the header.
 - "How do I open a gig / see its details?"
 - "Where are my earnings / total gigs?"
 - "How do I change theme / dark mode / light mode?"
+- "How do I change my phone number?" / "I got a new number"
 - "Where are notifications / profile / logout / support?"
 - "How do I edit profile, interests, socials, location, or notification preferences?"
 - "Where do I verify my identity / phone?"
@@ -108,8 +110,15 @@ Open via the **profile picture** in the header.
    - Own pending / waitlisted / in-progress → **Home → My Gigs → Active**.
    - Completed → **My Gigs → Completed**; expired → **My Gigs → Expired**.
    - Earnings / total gigs count → **My Gigs → Your Stats**.
-   - Theme / support chat / notification inbox / profile / logout → matching **header** icon.
+   - **Theme / dark mode / light mode** → header **sun** (tap → light) or **moon** (tap → dark).
+     This is an in-app control — never say it follows the phone's system setting or that there
+     is no theme toggle.
+   - Support chat / notification inbox / profile / logout → matching **header** icon.
    - Edit profile, location, socials, interests, identity, notification prefs → **avatar → Profile**.
+   - **Phone (self-serve, not a handoff):** **avatar → Profile → Edit profile** → enter the new
+     number → **Save changes** → submit the **OTP** texted to that number. Never say there is
+     no self-serve way or that the team must update it on the backend. Hand off only if they
+     already hit the change limit, the OTP never arrives, or save/verify errors.
 2. Make it concrete for **their** account when they ask "what do I have?" — use `crwd_db`
    `get_user_gigs` with the authenticated `user_id` from the `[CRWD member]` context line
    (pass it straight through), and reflect their real active / completed gigs so it matches
@@ -129,6 +138,7 @@ Open via the **profile picture** in the header.
   Explore even though Explore can show Pending Approval / In Progress cards too.
 - There is **no** Pending tab and **no** History / Past tab. Pending → **Active**; past-due
   unfinished → **Expired**; done → **Completed**.
+- Never invent theme/phone/profile steps from general knowledge — follow this skill's labels.
 - Header **bell** = notification inbox; Profile **Notifications** toggles = SMS/email/web prefs.
   Don't mix them up.
 - Explore **Map** pin is a view mode, not "set my location" — location is **Profile → Edit
@@ -145,5 +155,7 @@ Open via the **profile picture** in the header.
 ## Verification
 
 - You named the correct screen and real UI labels for what they wanted.
+- Theme asks got header sun/moon, not OS settings.
+- Phone-change asks got Edit profile → Save → OTP, not a backend/human offer.
 - Pending / waitlisted directions point to **My Gigs → Active**, not a Pending tab.
 - "What do I have?" answers reflect real `crwd_db` data, matching their My Gigs tabs.

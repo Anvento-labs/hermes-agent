@@ -1,7 +1,7 @@
 ---
 name: crwd-handoff
-description: "Hand a CRWD conversation to a human — for frustration/anger, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or out-of-scope-but-relevant questions. Answer routine payment-status/history questions with crwd-payment-status first — don't hand those off. Use whenever you're unsure it's safe to answer."
-version: 1.0.0
+description: "Hand a CRWD conversation to a human — for frustration/anger, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or out-of-scope-but-relevant questions. Answer routine payment-status/history with crwd-payment-status first, and app/profile how-tos (theme, dark mode, phone via OTP, DOB, nav) with crwd-application-expert first — don't hand those off. Use whenever you're unsure it's safe to answer."
+version: 1.0.1
 metadata:
   hermes:
     tags: [crwd, handoff, escalate, human, frustrated, angry, dispute, rejected, ticket]
