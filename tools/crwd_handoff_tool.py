@@ -230,7 +230,13 @@ CRWD_HANDOFF_SCHEMA = {
             },
             "summary": {
                 "type": "string",
-                "description": "One or two lines of context for the human agent: what the member needs and what you already tried.",
+                "description": (
+                    "One or two lines of context for the human agent: what the member "
+                    "needs and what you already tried. If this references gig/member "
+                    "status (enrollment, acceptance, approval, stage, buy link), it must "
+                    "come from a get_user_gig_status/get_user_gigs call made this turn, "
+                    "not an earlier claim in the conversation."
+                ),
             },
         },
         "required": ["reason"],

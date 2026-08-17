@@ -27,6 +27,8 @@ Load the section you need:
 
 - `skill_view("crwd-reference", "references/company-facts.md")` — what CRWD is, who it serves
 - `skill_view("crwd-reference", "references/gig-lifecycle.md")` — the full browse→paid flow
+- `skill_view("crwd-reference", "references/gig-stages.md")` — stage/`next_step` machine and
+  the accepted-vs-approved terminology contract
 - `skill_view("crwd-reference", "references/payments-dot.md")` — Dot payouts, reimbursement rules
 - `skill_view("crwd-reference", "references/proof-requirements.md")` — what proof each gig type needs
 

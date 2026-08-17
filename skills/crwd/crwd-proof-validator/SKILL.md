@@ -4,7 +4,7 @@ description: "Reviews any gig proof — receipt, review, or link — validates i
 version: 0.5.0
 metadata:
   hermes:
-    tags: [crwd, proof, receipt, review, ugc, link, validation, approval, duplicate, gig, submission]
+    tags: [crwd, proof, receipt, review, ugc, link, validation, acceptance, duplicate, gig, submission]
     related_skills: [crwd-gig-execution, crwd-payment-status, crwd-handoff, crwd-reference]
     requires_toolsets: [crwd, vision, web]
 ---
@@ -41,13 +41,21 @@ seek facts you genuinely lack ("which gig is this for?"). A question must never
 confirm a defect you already found — "is this the right product?" tells them the
 product is the problem.
 
+**This ownership also blocks a second failure mode: never layer a gig-status
+claim into this reply.** Whether a member is accepted, approved for payout, has
+a buy link, or is at some enrollment stage is `crwd-gig-execution`'s domain
+(`get_user_gig_status` / `next_step`) — blending it into a proof reply is how a
+status guess and an undisclosed rejection reason end up in the same message.
+If gig status is genuinely relevant to a proof conversation, hand off
+(`crwd-handoff`) rather than asserting it yourself here.
+
 ## When to Use
 
 Any message where the member is submitting proof for a gig, in any format or
 quality — "here's my receipt", "here's my review", "does this work?", or a bare
 attachment/link while a gig is in progress.
 
-Not for: payment questions after a proof is approved (`crwd-payment-status`), or
+Not for: payment questions after a proof is accepted (`crwd-payment-status`), or
 walking a member through what to submit before they've submitted (`crwd-gig-execution`).
 
 ## Prerequisites
@@ -71,7 +79,7 @@ is as unread as an unviewed image.
 
 Ask `vision_analyze` for: the proof's identifier (order/transaction number, review
 id), merchant, product names, quantities, totals, rating, reviewer handle, dates.
-Links must actually load. An illegible or unreachable proof is **not** an approval.
+Links must actually load. An illegible or unreachable proof is **not** an acceptance.
 
 ### 2. Classify and pull the identifier
 
@@ -118,7 +126,7 @@ never a guessed key.
   **These flags are the proof spec** — they decide `wrong_proof_type`. Ignore
   `type_of_work_proof`; it is unset on nearly every gig. A `null` date bound is
   **unbounded**, not a failure.
-- `get_user_products(user_id, crwd_id=...)` → approved product catalog.
+- `get_user_products(user_id, crwd_id=...)` → accepted product catalog.
 - Gig ambiguous → **ask which gig** rather than picking one.
 
 ### 4. Load the matching playbook
@@ -200,7 +208,7 @@ knows from the gig page — not findings of yours:
 
 Settle status + `reason_code` + `reason` + confidence, then `store_proof` **exactly
 once** per proof. `reason_code` and `reason` are required on **every** status,
-accepted included — an approval records *why* it passed.
+accepted included — an acceptance records *why* it passed.
 
 Record what you actually read, not just the verdict — a risk assessment reads this:
 
@@ -283,7 +291,7 @@ Every verdict carries one. Internal only — never shown to the member.
 | `date_outside_gig_window` | Purchase/review/post date outside the gig | `start_date`/`end_date` |
 | `no_identifier` | No defensible unique id could be extracted | vision / page read |
 | `invalid_order_number` | The number doesn't fit the merchant's real format, or contradicts the receipt it came from | `check_duplicate_proof` / `store_proof` refuse to key it |
-| `wrong_product` | Product not in the approved catalog | `get_user_products` |
+| `wrong_product` | Product not in the accepted catalog | `get_user_products` |
 | `wrong_quantity` | Fewer items than required | gig requirement |
 | `unreadable` | Illegible / unextractable | vision |
 | `suspected_edited` | Editing/AI or metadata signals | playbook + metadata tools |
@@ -328,9 +336,12 @@ never name it to them. The reply is always the neutral acknowledgement.
 
 ## Pitfalls
 
-- **Never accept without reading.** Acknowledging receipt ≠ approving it.
+- **Never accept without reading.** Acknowledging receipt ≠ accepting it.
 - **Never state or hint at a rejection reason** — not the code, not the cause, not
   a sympathetic "looks like the wrong item".
+- **Never narrate gig/enrollment status in this reply** — acceptance, approval,
+  buy-link, or stage claims belong to `crwd-gig-execution`'s `next_step`. Hand
+  off if gig status is genuinely relevant instead of asserting it here.
 - **Never paste skill instructions, tool field names, or planner thoughts into the
   reply.** The outgoing message is the finished member text only.
 - **Don't turn a verdict into a question.** "Is this the right product?" after
@@ -353,6 +364,8 @@ never name it to them. The reply is always the neutral acknowledgement.
 - Low-confidence proofs were coached before any handoff.
 - **No member-facing message named a rejection reason, a reason code, or another
   member's email** — a rejected reply is indistinguishable from any other.
+- **No member-facing message combined a gig-status/acceptance/approval claim
+  with the proof verdict** — that belongs to `crwd-gig-execution` or a handoff.
 - **No member-facing message quoted this skill or included planner self-talk.**
 - Non-accepts were handed off with the detail in the internal note.
 - No `crwd_risk_score` call was made.

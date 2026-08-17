@@ -16,7 +16,7 @@ metadata:
 
 # CRWD Gig Execution
 
-Get the member from "approved" to "proof submitted" — buying, content, and proof, in one
+Get the member from "accepted" to "proof submitted" — buying, content, and proof, in one
 skill (proof is just the tail of doing the gig).
 
 ## When to Use
@@ -30,8 +30,13 @@ skill (proof is just the tail of doing the gig).
 
 0. **Load enrolled gig status.** Call `get_user_gig_status` with `user_id` from the
    `[CRWD member]` context line. Use each gig's `next_step` as the primary answer when
-   the member asks about gigs they are in. Re-call with `gig_name` or `crwd_id` when they
-   name a specific gig.
+   the member asks about gigs they are in — relay it verbatim or closely paraphrased.
+   **Never compose your own sentence about enrollment, acceptance, approval, or
+   buy-link status** from the raw fields, and never read `isApproved` off `membership`
+   (legacy, unused end-to-end — full stage table + terminology:
+   `skill_view("crwd-reference", "references/gig-stages.md")`). **"Accepted" = let into
+   the gig; "approved" = proof validated and cleared for payout** — never swap them.
+   Re-call with `gig_name` or `crwd_id` when they name a specific gig.
 1. **Confirm the gig and its type** (live `irl` vs online) with `crwd_db` `get_gig_details`.
    The type tells you where they shop, not what to submit — the store `requirements` flags do
    that (step 6). Don't use `type_of_work_proof`; it is unset on nearly every gig. Hand off if
@@ -103,6 +108,14 @@ skill (proof is just the tail of doing the gig).
 - Rejected submissions always go to a human. Never coach a resubmission.
 - Never replace linked `name` / `gig_name` with a plain title or `Title — url` —
   paste the markdown field verbatim and do not append a bare URL.
+- **Ground every enrollment/acceptance/approval claim in a tool call made THIS
+  turn.** Never state or imply gig status from memory, an earlier turn, or
+  inference — re-call `get_user_gig_status` if you need it again before saying
+  anything about status.
+- **Never layer a proof-rejection reason onto a status/stage answer.** If proof
+  can't be processed yet and the member asks why, that reply is
+  `crwd-proof-validator`'s alone (its no-disclosure rule) — don't narrate a
+  gig-status claim and a proof concern in the same message.
 
 ## Verification
 

@@ -5,13 +5,13 @@ Every member goes through the same flow:
 1. **Browse** — gigs are listed with a payout, a deadline ("Due in X days"), an estimated
    time ("Takes X hours"), and a source (Walmart, Amazon, JoinCRWD, etc.).
 2. **Apply** — the member applies for a gig in the CRWD app/website.
-3. **Get approved** — CRWD or the brand approves the application before the member can start.
+3. **Get accepted** — CRWD or the brand accepts the application before the member can start.
 4. **Perform the gig** — see gig types below.
 5. **Submit proof** — receipts, review screenshots, UGC video/photo links, uploaded
    **into the coach chat (this conversation) as messages/attachments**, where the
    `crwd-proof-validator` skill reviews them. Proof is not uploaded in the CRWD app.
    Reviews are always proved by **screenshot**, never by link.
-6. **Get paid** — payment is triggered once proof is reviewed and verified.
+6. **Get paid** — once all proof is reviewed and approved, payment is triggered.
 
 ## Gig types
 

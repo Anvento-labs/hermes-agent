@@ -153,7 +153,7 @@ Score `+50` when the member is clearly abusing the channel:
 
 - Scam or phishing links ("click here for bitcoin", credential harvesting)
 - Using the bot or its tokens for their own unrelated purposes
-- Re-uploading proof that was already rejected, repeatedly, to get around approval
+- Re-uploading proof that was already rejected, repeatedly, to get around the rejection
 
 **This cannot be recorded on the proof table** — `store_proof` requires a real
 `proof_type` and a normalizable id, and a scam message has neither. The score *is*

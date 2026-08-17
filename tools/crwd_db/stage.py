@@ -107,13 +107,13 @@ def _chat_proof_progress(chat_proofs: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     return {
         "receipt_submitted": receipt_accepted or receipt_needs_human or receipt_rejected,
-        "receipt_approved": receipt_accepted,
+        "receipt_accepted": receipt_accepted,
         "receipt_needs_human": receipt_needs_human and not receipt_accepted,
         "receipt_rejected": (
             receipt_rejected and not receipt_accepted and not receipt_needs_human
         ),
         "review_submitted": review_accepted or review_needs_human or review_rejected,
-        "review_approved": review_accepted,
+        "review_accepted": review_accepted,
         "review_needs_human": review_needs_human and not review_accepted,
         "review_rejected": (
             review_rejected and not review_accepted and not review_needs_human
@@ -179,7 +179,7 @@ def compute_gig_stage(
     chat = _chat_proof_progress(chat_proofs or [])
     progress: Dict[str, Any] = {
         # NOT a purchase confirmation. A user_product_purchases row is written when
-        # the member is *approved to join* (every row in the data is
+        # the member is *accepted to join* (every row in the data is
         # source: "join_approved", and purchasedAt is just createdAt on most of
         # them) -- it records which product they may buy and the buy link, not that
         # they bought anything. Naming it purchase_confirmed made the coach tell a
@@ -187,16 +187,16 @@ def compute_gig_stage(
         # system had registered no such thing.
         "product_assigned": bool(purchases),
         "receipt_submitted": chat["receipt_submitted"],
-        "receipt_approved": chat["receipt_approved"],
+        "receipt_accepted": chat["receipt_accepted"],
         "review_submitted": chat["review_submitted"],
-        "review_approved": chat["review_approved"],
+        "review_accepted": chat["review_accepted"],
     }
 
     if rejection:
         return {
             "stage": "rejected",
             "next_step": (
-                f"Your enrollment for {gig_name} was not approved. "
+                f"Your enrollment for {gig_name} was not accepted. "
                 "I'll loop in a human who can help."
             ),
             "progress": progress,
@@ -206,9 +206,9 @@ def compute_gig_stage(
 
     if is_accepted is False:
         return {
-            "stage": "request_pending_approval",
+            "stage": "request_pending_acceptance",
             "next_step": (
-                f"Your application for {gig_name} is pending approval — we'll "
+                f"Your application for {gig_name} is pending acceptance — we'll "
                 "notify you once you're accepted into the gig."
             ),
             "progress": progress,
@@ -238,20 +238,20 @@ def compute_gig_stage(
         and proof_completion.get("complete")
     ):
         progress["receipt_submitted"] = True
-        progress["receipt_approved"] = True
+        progress["receipt_accepted"] = True
         progress["review_submitted"] = True
-        progress["review_approved"] = True
+        progress["review_accepted"] = True
         return _payout_stage(
             gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
         )
 
-    if not chat["receipt_approved"]:
+    if not chat["receipt_accepted"]:
         if chat["receipt_needs_human"]:
             return {
                 "stage": "receipt_review",
                 "next_step": (
                     f"Your receipt for {gig_name} is being reviewed — "
-                    "we'll notify you when it's approved."
+                    "we'll notify you when it's accepted."
                 ),
                 "progress": progress,
                 "buy_link": buy_link,
@@ -291,7 +291,7 @@ def compute_gig_stage(
         outstanding = list(proof_completion.get("outstanding") or [])
         if not outstanding:
             progress["review_submitted"] = True
-            progress["review_approved"] = True
+            progress["review_accepted"] = True
             return _payout_stage(
                 gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
             )
@@ -302,7 +302,7 @@ def compute_gig_stage(
                     "stage": "review_review",
                     "next_step": (
                         f"Your review for {gig_name} is under review — "
-                        "we'll notify you when it's approved."
+                        "we'll notify you when it's accepted."
                     ),
                     "progress": progress,
                     "buy_link": buy_link,
@@ -321,12 +321,12 @@ def compute_gig_stage(
                 }
             if gig_type == "irl":
                 next_step = (
-                    f"Receipt approved for {gig_name}! Next: post your review, then "
+                    f"Receipt accepted for {gig_name}! Next: post your review, then "
                     "send it here in the chat."
                 )
             else:
                 next_step = (
-                    f"Order approved for {gig_name}! Leave your review, then send "
+                    f"Order accepted for {gig_name}! Leave your review, then send "
                     "the review screenshot here in the chat."
                 )
             return {
@@ -350,7 +350,7 @@ def compute_gig_stage(
         }
 
     # No completion payload (unit tests / undetermined requirements): type heuristics.
-    if chat["review_approved"]:
+    if chat["review_accepted"]:
         return _payout_stage(
             gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
         )
@@ -378,12 +378,12 @@ def compute_gig_stage(
         }
     if gig_type == "irl":
         next_step = (
-            f"Receipt approved for {gig_name}! Next: post your review, then "
+            f"Receipt accepted for {gig_name}! Next: post your review, then "
             "send it here in the chat."
         )
     else:
         next_step = (
-            f"Order approved for {gig_name}! Leave your review, then send "
+            f"Order accepted for {gig_name}! Leave your review, then send "
             "the review screenshot here in the chat."
         )
     return {
