@@ -515,7 +515,7 @@ def _store_proof(
         return tool_error(f"status must be one of: {', '.join(sorted(_PROOF_STATUSES))}")
     if confidence and confidence not in _PROOF_CONFIDENCE:
         return tool_error(f"confidence must be one of: {', '.join(sorted(_PROOF_CONFIDENCE))}")
-    # Required on every status, accepted included: an approval with no recorded
+    # Required on every status, accepted included: an acceptance with no recorded
     # reason cannot be audited later.
     if not reason_code:
         return tool_error("reason_code is required for store_proof (use clean_match on an accept)")

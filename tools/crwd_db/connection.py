@@ -70,7 +70,7 @@ MEMBER_FIELDS = {
     "isAccepted": 1, "isApproved": 1, "isCompleted": 1, "hasPaid": 1,
     "isDeleted": 1, "createdAt": 1, "updatedAt": 1,
 }
-# What product a member is approved to buy for a gig (name + buy link).
+# What product a member is accepted to buy for a gig (name + buy link).
 PURCHASE_FIELDS = {
     "product_name": 1, "product_url": 1, "store_name": 1, "crwd_id": 1,
     "crwd_name": 1, "gig_type": 1, "source": 1, "purchasedAt": 1, "createdAt": 1,

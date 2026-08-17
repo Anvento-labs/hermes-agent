@@ -42,9 +42,13 @@ first. Handoff is for stuck / unsafe / upset, not mildly unsure.
 
 ## Procedure
 
-1. **Notify the team.** If the `crwd_handoff` tool is available, call it with a short
-   `reason` and a one-line `summary` of the situation — it posts an internal note so a human
-   has context and opens the conversation so it gets assigned to an agent. If the tool isn't
+1. **Re-verify status, then notify the team.** If your `summary` will reference gig/member
+   status — enrollment, acceptance, approval, stage, rejection, buy link, or proof outcome —
+   call `get_user_gig_status` (or the specific tool for what you're citing) fresh **this
+   turn** first; never base it on a claim made earlier in the conversation, memory, or
+   inference. If the `crwd_handoff` tool is available, call it with a short `reason` and a
+   one-line `summary` grounded in that fresh read — it posts an internal note so a human has
+   context and opens the conversation so it gets assigned to an agent. If the tool isn't
    available in this session, skip straight to step 2 (the member still gets handed a
    conversation a human can pick up).
 2. **Tell the member — warmly and confidently.** Say you're looping in a human, plainly:
@@ -65,6 +69,10 @@ process *less*. Be confident.
   no message.
 - Don't promise a specific human, time, or outcome — just that the team will follow up here.
 - Don't try one more risky answer "to be helpful" once you've decided to hand off.
+- **Don't carry an earlier, unverified status claim into the handoff summary.** If the
+  conversation already asserted something about acceptance/approval/stage/buy-link, re-verify
+  it with a fresh tool call before it goes in the note — a wrong claim made once shouldn't be
+  written down twice.
 
 ## Verification
 

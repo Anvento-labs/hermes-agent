@@ -185,6 +185,10 @@ def _joined_member_filter(user_id: str) -> Dict[str, Any]:
             {
                 "$or": [
                     {"isAccepted": True},
+                    # Legacy status synonyms for enrolled/joined membership. CRWD's own
+                    # backend has historically written "Approved" here for enrollment
+                    # (not the payout-approval concept) -- isAccepted, OR'd in above,
+                    # remains the authoritative enrollment signal regardless of status.
                     {"status": {"$in": ["Active", "Accepted", "Approved", "Joined"]}},
                 ],
             },

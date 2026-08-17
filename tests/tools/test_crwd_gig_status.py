@@ -39,10 +39,10 @@ def _stage(membership=None, gig=None, purchases=None, chat_proofs=None,
 
 
 class TestComputeGigStage:
-    def test_request_pending_approval(self):
+    def test_request_pending_acceptance(self):
         out = _stage(membership=_membership(isAccepted=False))
-        assert out["stage"] == "request_pending_approval"
-        assert "pending approval" in out["next_step"].lower()
+        assert out["stage"] == "request_pending_acceptance"
+        assert "pending acceptance" in out["next_step"].lower()
         assert "waitlist" not in out["next_step"].lower()
 
     def test_rejected_handoff(self):
@@ -102,7 +102,7 @@ class TestComputeGigStage:
             }],
         )
         assert out["stage"] == "need_review"
-        assert out["progress"]["receipt_approved"] is True
+        assert out["progress"]["receipt_accepted"] is True
 
     def test_rejected_then_accepted_advances(self):
         out = _stage(
@@ -113,7 +113,7 @@ class TestComputeGigStage:
             ],
         )
         assert out["stage"] == "need_review"
-        assert out["progress"]["receipt_approved"] is True
+        assert out["progress"]["receipt_accepted"] is True
 
     def test_awaiting_payout_when_review_accepted(self):
         out = _stage(

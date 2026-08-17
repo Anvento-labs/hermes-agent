@@ -1,10 +1,10 @@
 ---
 name: crwd-gig-discovery
-description: "Coach a CRWD member on assigned gigs (status, next step) and find open gigs to join — details, apply, approval, and store location for live gigs. Use when they ask what to do, help with gigs, what's available, what they have, about a specific gig, or where the store is."
+description: "Coach a CRWD member on assigned gigs (status, next step) and find open gigs to join — details, apply, acceptance, and store location for live gigs. Use when they ask what to do, help with gigs, what's available, what they have, about a specific gig, or where the store is."
 version: 2.1.1
 metadata:
   hermes:
-    tags: [crwd, gigs, campaigns, coach, browse, apply, approval, payout, deadline, store, walmart, target, location, nearest, hours, stock]
+    tags: [crwd, gigs, campaigns, coach, browse, apply, acceptance, payout, deadline, store, walmart, target, location, nearest, hours, stock]
     related_skills: [crwd-gig-execution, crwd-application-expert, crwd-reminders-followups, crwd-reference]
     requires_toolsets: [crwd, web]
     config:
@@ -61,7 +61,7 @@ reminder via `crwd-reminders-followups`).
 
 1. **Available gigs to apply for:** `crwd_db` action `list_active_gigs` **with `user_id`**
    from the `[CRWD member]` context line. Returns open gigs sorted by soonest end date,
-   excluding any gig the member already has a membership for (pending, approved, or active).
+   excluding any gig the member already has a membership for (pending, accepted, or active).
    Includes payout, dates, stores, and proof type. Results are paginated (default 5 per
    page) — the response includes `has_more`, `total`, and `next_offset`.
    When the member asks to see more ("show me more", "any others?"), call again with
@@ -71,10 +71,10 @@ reminder via `crwd-reminders-followups`).
 2. **A specific gig by name/text:** `get_gig_details` (fuzzy-matches, returns ranked
    candidates with an `_id`). **Confirm the right `_id`** before you quote details or use it
    elsewhere — if two candidates are close, ask which one they mean.
-3. **Pending approval (not in progress yet):** Call `get_waitlisted_gigs` **before you
+3. **Pending acceptance (not in progress yet):** Call `get_waitlisted_gigs` **before you
    reply** with `user_id` from the `[CRWD member]` context line — do not reuse an earlier
    message's tool result in this chat. Returns gigs they applied for but are not yet
-   accepted (`isAccepted: false` — Request Pending Approval). Use this for "pending
+   accepted (`isAccepted: false` — Request Pending Acceptance). Use this for "pending
    approval" or "still waiting to be accepted" — not `get_user_gigs` or `list_active_gigs`.
 4. **Their in-progress / "what gigs am I part of" asks:** Call `get_user_gigs` or
    `get_user_gig_status` **before you reply** before naming any enrolled gigs — never
@@ -83,7 +83,7 @@ reminder via `crwd-reminders-followups`).
    in", "my gigs"), use `get_user_gig_status` with `include_waitlisted=true`, or call
    `get_user_gigs` plus `get_waitlisted_gigs`. Pass `user_id` from the `[CRWD member]`
    line. `get_user_gigs` alone shows gigs they're **accepted into** (`isAccepted: true`,
-   Home → Active / IN PROGRESS), not pending-approval applications.
+   Home → Active / IN PROGRESS), not pending-acceptance applications.
 5. **Past participation / history:** `get_user_gig_history` with `user_id`. Returns prior
    membership rows (including completed, rejected, or deleted gigs). Use for "what gigs have
    I done before?" — not `get_user_gigs` (in-progress only) or `list_active_gigs`.
@@ -148,9 +148,9 @@ reminder via `crwd-reminders-followups`).
    - Suggest they **call ahead to confirm stock** — you cannot see live inventory, so never
      claim something is in stock.
 9. Explain the flow against their **actual** state, not generically: browse → apply →
-   **get approved** → perform → submit proof → get paid. Call `get_user_gig_status` when
+   **get accepted** → perform → submit proof → get paid. Call `get_user_gig_status` when
    you need each gig's `next_step` — quote that instead of generic lifecycle advice. If
-   they're waiting on approval, say that; if approved, point them at what to do next
+   they're waiting on acceptance, say that; if accepted, point them at what to do next
    (`crwd-gig-execution` for buy / content / proof how-to).
 10. Be precise on **payout, deadline, and estimated time** — quote the real numbers; never guess.
 11. Offer a deadline reminder if the gig is time-sensitive (see `crwd-reminders-followups`).
@@ -169,7 +169,7 @@ For the deeper lifecycle detail, load
   "what's available?" and steps 3–4 alone for "what active / pending gigs do I have?"
   Coach / vague asks **may** use both in one turn as two **labeled** sections
   (Your gigs → Open gigs); never dump enrolled rows into an unlabeled Explore list.
-- **Pending approval** → step 3 (`get_waitlisted_gigs`) only — `isAccepted: false`. Do not use
+- **Pending acceptance** → step 3 (`get_waitlisted_gigs`) only — `isAccepted: false`. Do not use
   `get_user_gigs` or `list_active_gigs` for those questions.
 - Always pass `user_id` to `list_active_gigs` when the member asks about available or new
   gigs — without it you may show gigs they've already joined.
@@ -178,7 +178,7 @@ For the deeper lifecycle detail, load
 - Only tell the member they've seen all available gigs when `has_more` is false.
 - `get_gig_details` returns *candidates*; picking the wrong `_id` sends the member to the
   wrong gig. Confirm first.
-- Approval is gated by CRWD/the brand — you can report the state, but don't promise approval.
+- Acceptance is gated by CRWD/the brand — you can report the state, but don't promise acceptance.
 - Product links: quote every `products[]` / `product_url` as `[Product Name](url)`.
   Never paraphrase, never reuse `gig_url`, and never stop at the first `buy_link`
   when more products exist.
