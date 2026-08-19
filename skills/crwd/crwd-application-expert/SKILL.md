@@ -1,7 +1,7 @@
 ---
 name: crwd-application-expert
 description: "Expert on CRWD app UI — Home/My Gigs, Explore, Profile, header. Use for how to use the app, where to find gigs/settings, how to open a gig, how to change theme / dark mode / light mode, notifications, logout, support, or how to change phone (via OTP), DOB, or other profile fields. Never answer these from general knowledge — load this skill first."
-version: 1.1.2
+version: 1.1.3
 metadata:
   hermes:
     tags: [crwd, app, application, navigation, home, explore, my-gigs, profile, ui, how-to, where, theme, notifications, settings]
@@ -88,6 +88,9 @@ Open via the **profile picture** in the header.
   - Gig reminder texts (1-, 3-, and 7-day reminders)
   - Email
   - Website notifications
+  - **"Is this text from CRWD?"** is not an app-UI question — load
+    `skill_view("crwd-reference", "references/company-facts.md")`. CRWD **does**
+    send gig texts from official numbers; don't say CRWD never texts.
 
 ## When to Use
 

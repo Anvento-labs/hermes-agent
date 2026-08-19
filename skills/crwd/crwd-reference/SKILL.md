@@ -1,7 +1,7 @@
 ---
 name: crwd-reference
-description: "Internal CRWD fact sheet (company, gig lifecycle, Dot payments, proof formats). Not user-facing — other crwd-* skills pull these details on demand. Load a section with skill_view(\"crwd-reference\", \"references/<file>.md\")."
-version: 1.0.0
+description: "Internal CRWD fact sheet (company, official SMS numbers, gig lifecycle, Dot payments, proof formats). Not user-facing — other crwd-* skills pull these details on demand. Also use when verifying whether an SMS or sender number is from CRWD. Load a section with skill_view(\"crwd-reference\", \"references/<file>.md\")."
+version: 1.0.1
 metadata:
   hermes:
     tags: [crwd, reference, internal, facts, lifecycle, payments, proof]
@@ -21,11 +21,13 @@ fact (company background, lifecycle, payment/Dot rules, proof formats). If you'r
 member and need one of those facts, load the matching reference file below rather than
 recalling it from memory.
 
+Exception: if the member asks whether a number or SMS is from CRWD, skill_view("crwd-reference", "references/company-facts.md") — do not list gigs unless they also asked to find the gig.
+
 ## Reference files
 
 Load the section you need:
 
-- `skill_view("crwd-reference", "references/company-facts.md")` — what CRWD is, who it serves
+- `skill_view("crwd-reference", "references/company-facts.md")` — what CRWD is, who it serves, official SMS numbers
 - `skill_view("crwd-reference", "references/gig-lifecycle.md")` — the full browse→paid flow
 - `skill_view("crwd-reference", "references/gig-stages.md")` — stage/`next_step` machine and
   the accepted-vs-approved terminology contract
