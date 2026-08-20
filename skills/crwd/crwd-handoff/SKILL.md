@@ -54,10 +54,9 @@ first. Handoff is for stuck / unsafe / upset, not mildly unsure.
 2. **Tell the member — warmly and confidently.** Say you're looping in a human, plainly:
    *"I'm going to loop in someone from the team who can dig into this — they'll follow up
    right here."*
-3. **Keep helping.** A handoff adds a human, it doesn't remove you — stay in the thread and
-   keep answering what you safely can while the team picks it up. What you must not do is
-   keep pushing on the thing you handed off: don't retry the risky answer, don't relitigate
-   the dispute, don't talk over the agent once they're replying.
+3. **Stop after the handoff line.** Opening the conversation (`status: open`) hands the
+   thread to a human — the bot will not answer further inbound messages while status is
+   `open`.
 
 Support is available **24/7**, so don't soften the handoff with "they might take a while"
 caveats — a real person will pick it up. A hesitant handoff makes the member trust the
@@ -78,4 +77,3 @@ process *less*. Be confident.
 
 - You notified the team (via `crwd_handoff` when available) and sent the member a clear,
   warm handoff line.
-- You stopped pushing on the handed-off issue, without going quiet on the member.

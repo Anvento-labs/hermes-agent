@@ -11,9 +11,9 @@ conversation maps to its own agent session.
   non-private) are answered.
 - **Outbound:** replies are posted to Chatwoot's Application API using the Agent
   Bot token in the `api_access_token` header.
-- **Conversation status:** the bot answers regardless of `conversation.status` —
-  `open`, `pending`, `resolved` and `snoozed` are all replied to, so it will
-  keep answering alongside a human agent who has taken the conversation over.
+- **Conversation status:** `open` means a human has taken over (handoff) and the
+  bot stays silent on further inbound messages while status is `open`. Other
+  statuses (`pending` / `resolved` / `snoozed`) are still answered.
 
 ## Setup
 

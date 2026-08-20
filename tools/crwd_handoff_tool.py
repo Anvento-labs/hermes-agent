@@ -10,9 +10,9 @@ human agent has context and can pick it up:
    it an owner (``pending`` conversations sit in the bot's queue unassigned).
 
 The member-facing "I'm looping in a human" message is just the agent's normal
-reply text -- this tool only handles the internal side. The coach keeps
-answering the thread after a handoff; the human joins it rather than replacing
-the bot, so nothing here silences the agent.
+reply text on this turn -- this tool only handles the internal side. Once
+status is ``open``, the Chatwoot adapter skips further inbound agent turns so
+the bot does not talk over the human.
 
 Self-contained by design: it resolves the current conversation from the gateway
 session context (``HERMES_SESSION_PLATFORM`` / ``HERMES_SESSION_CHAT_ID``) and
@@ -180,20 +180,25 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
     if notified and opened:
         reason = (
             "Team notified and conversation opened for assignment. Send the member a "
-            "warm handoff message, then keep helping as usual."
+            "warm handoff message this turn; further inbound messages stay silent while "
+            "status is open."
         )
     elif notified:
         reason = (
             "Team notified, but the conversation could not be opened for assignment. "
-            "Still hand off to the member warmly, then keep helping as usual."
+            "Still send the member a warm handoff message this turn."
         )
     elif opened:
         reason = (
             "Conversation opened for assignment, but the internal note could not be "
-            "posted. Still hand off to the member warmly, then keep helping as usual."
+            "posted. Still send the member a warm handoff message this turn; further "
+            "inbound messages stay silent while status is open."
         )
     else:
-        reason = "Chatwoot could not be updated; still hand off to the member warmly, then keep helping as usual."
+        reason = (
+            "Chatwoot could not be updated; still send the member a warm handoff "
+            "message this turn."
+        )
 
     return json.dumps(
         {
@@ -217,9 +222,10 @@ CRWD_HANDOFF_SCHEMA = {
         "or an out-of-scope-but-relevant question you can't safely answer). It "
         "posts an internal note for the team and opens the conversation so it "
         "gets assigned to an agent. You must still send the member a short, warm "
-        "'looping in a human' message yourself, and you keep answering the thread "
-        "afterwards — the human joins you rather than replacing you. Safe to call "
-        "even outside Chatwoot: it no-ops and tells you to hand off anyway."
+        "'looping in a human' message yourself on this turn. After status is open, "
+        "the bot stays silent on further inbound messages so you do not talk over "
+        "the human. Safe to call even outside Chatwoot: it no-ops and tells you to "
+        "hand off anyway."
     ),
     "parameters": {
         "type": "object",
