@@ -1,6 +1,6 @@
 ---
 name: crwd-troubleshooting
-description: "Fix common CRWD technical issues — a link that won't work, a page that won't load, a button that does nothing. Use when a member reports something in the app/site is broken or not working. Technical fixes only; if it doesn't resolve or the member is frustrated, escalate to crwd-handoff."
+description: "Fix common CRWD technical issues — a link that won't work, a page that won't load, a button that does nothing. Use when a member reports something in the app/site is broken or not working. Technical fixes only; if the standard fixes don't resolve it, escalate to crwd-handoff."
 version: 1.0.0
 metadata:
   hermes:
@@ -32,8 +32,9 @@ Walk through quick fixes, one step at a time (or as a short list), and ask if it
 Ask: *"Did that get it working?"*
 
 - If **yes** → great, confirm they can continue the gig; offer a reminder if a deadline is close.
-- If **no**, or it's a **repeat** of the same complaint, or they're **frustrated** → stop
-  troubleshooting and **hand off** (`crwd-handoff`). Don't loop the same fixes.
+- If **no** after the standard fixes, or it's a **repeat** of the same complaint → stop
+  troubleshooting and **hand off** (`crwd-handoff`). Don't loop the same fixes. Mild
+  frustration while they're still trying the steps is not a handoff by itself.
 
 If it's not actually broken but they just can't find something in the app, that's a
 navigation question → use `crwd-application-expert` instead.
@@ -47,4 +48,4 @@ navigation question → use `crwd-application-expert` instead.
 ## Verification
 
 - You offered the standard fixes one at a time and checked whether they worked.
-- If unresolved or the member was frustrated, you handed off instead of repeating steps.
+- If the standard fixes didn't resolve it, you handed off instead of repeating steps.

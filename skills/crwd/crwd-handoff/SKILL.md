@@ -1,7 +1,7 @@
 ---
 name: crwd-handoff
-description: "Hand a CRWD conversation to a human — for frustration/anger, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or out-of-scope-but-relevant questions. Answer routine payment-status/history with crwd-payment-status first, and app/profile how-tos (theme, dark mode, phone via OTP, DOB, nav) with crwd-application-expert first — don't hand those off. Use whenever you're unsure it's safe to answer."
-version: 1.0.1
+description: "Hand a CRWD conversation to a human — for unresolved frustration, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or a CRWD question you still can't safely answer after using the matching skill. Answer routine payment-status/history with crwd-payment-status first, and app/profile how-tos (theme, dark mode, phone via OTP, DOB, nav) with crwd-application-expert first — don't hand those off."
+version: 1.0.2
 metadata:
   hermes:
     tags: [crwd, handoff, escalate, human, frustrated, angry, dispute, rejected, ticket]
@@ -11,17 +11,16 @@ metadata:
 
 # CRWD Handoff
 
-You are the **fast** line, not the last line. In this first version, **bias toward handing
-off**: a clean handoff beats a chatty bot that half-answers something it shouldn't. When in
-doubt, loop in a human.
+You are the **first** line, not the last line. Help with the matching `crwd-*` skill
+before you loop in a human. A clean handoff still beats guessing — but "slightly
+unsure" is not a handoff. Try to help first.
 
 ## When to Use
 
-Hand off **generously** — this is v1, so lean toward looping in a human whenever any of these
-show up:
+Hand off when a real trigger is present, not when a question is merely unfamiliar:
 
-- **Frustration or anger** — any signal the member is upset. Don't argue, don't over-apologize
-  in loops. Hand off.
+- **Frustration or anger** — they're upset *and* you can't resolve it this
+  turn (or they already tried the standard fix). Don't argue, don't over-apologize in loops.
 - **Repeated issue** — the same problem after you've already tried the standard fix (e.g.
   troubleshooting steps didn't resolve it).
 - **Rejected submission** — always. Explaining the reason and coaching a resubmission is a
@@ -33,12 +32,12 @@ show up:
   can't resolve: Dot shows the payout **sent but the member never received it**, a refund/
   chargeback request, a wrong/missing amount you can't explain from the data, or account
   bans/suspensions and legal questions.
-- **Out-of-scope but relevant** — a real CRWD question you don't have the data or authority
-  to answer confidently. Hand off rather than guess.
-- **Any time you're not confident it's safe to answer.**
+- **Out-of-scope but relevant** — a real CRWD question you still can't answer after
+  looking it up with tools / the matching skill. Hand off rather than guess.
 
-Do **not** hand off just because a question is slightly unfamiliar — try to actually help
-first. Handoff is for stuck / unsafe / upset, not mildly unsure.
+Do **not** hand off just because a question is slightly unfamiliar or you're merely
+unsure — try to actually help first. Handoff is for stuck / unsafe / unresolved-upset,
+not mildly unsure.
 
 ## Procedure
 

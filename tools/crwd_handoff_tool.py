@@ -217,10 +217,12 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
 CRWD_HANDOFF_SCHEMA = {
     "name": "crwd_handoff",
     "description": (
-        "Loop a human into the CURRENT CRWD conversation (frustration/anger, "
-        "repeated unresolved issue, rejected submission, money/account dispute, "
-        "or an out-of-scope-but-relevant question you can't safely answer). It "
-        "posts an internal note for the team and opens the conversation so it "
+        "Loop a human into the CURRENT CRWD conversation after the matching "
+        "skill couldn't resolve it (unresolved frustration, repeated issue, "
+        "rejected submission, money/account dispute, or a CRWD question you "
+        "still can't safely answer). Don't call this because a question is "
+        "slightly unfamiliar. It posts an internal note for the team and opens "
+        "the conversation so it "
         "gets assigned to an agent. You must still send the member a short, warm "
         "'looping in a human' message yourself on this turn. After status is open, "
         "the bot stays silent on further inbound messages so you do not talk over "
