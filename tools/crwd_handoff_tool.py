@@ -10,9 +10,9 @@ human agent has context and can pick it up:
    it an owner (``pending`` conversations sit in the bot's queue unassigned).
 
 The member-facing "I'm looping in a human" message is just the agent's normal
-reply text -- this tool only handles the internal side. The coach keeps
-answering the thread after a handoff; the human joins it rather than replacing
-the bot, so nothing here silences the agent.
+reply text on this turn -- only when this tool returns ``opened: true``. Once
+status is ``open``, the Chatwoot adapter skips further inbound agent turns so
+the bot does not talk over the human.
 
 Self-contained by design: it resolves the current conversation from the gateway
 session context (``HERMES_SESSION_PLATFORM`` / ``HERMES_SESSION_CHAT_ID``) and
@@ -24,8 +24,7 @@ Connection comes from the same env the Chatwoot adapter uses:
 ``CHATWOOT_BASE_URL``, ``CHATWOOT_AGENT_TOKEN`` (falling back to
 ``CHATWOOT_TOKEN``), and ``CHATWOOT_ACCOUNT_ID`` (used when the session chat id
 has no account prefix). If the note cannot be posted, the tool degrades
-gracefully -- it never raises -- so the coach still delivers the warm handoff
-message to the member.
+gracefully -- it never raises -- so a successful open can still hand off.
 """
 
 from __future__ import annotations
@@ -37,7 +36,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, Optional, Tuple
 
-from tools.registry import registry, tool_error
+from tools.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -141,15 +140,12 @@ def _compose_note(reason: str, summary: str) -> str:
 
 def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
     if not check_crwd_handoff_requirements():
-        # Not a Chatwoot session with creds — tell the agent to proceed with the
-        # member-facing handoff message anyway (see the crwd-handoff skill).
         return json.dumps(
             {
                 "_type": "crwd_handoff",
                 "notified": False,
                 "opened": False,
-                "reason": "Chatwoot not configured; skip the note and still hand off to the member.",
-                "error": None,
+                "reason": "Chatwoot not configured; conversation was not opened.",
             },
             ensure_ascii=False,
         )
@@ -161,8 +157,7 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 "_type": "crwd_handoff",
                 "notified": False,
                 "opened": False,
-                "reason": "No current Chatwoot conversation; skip the note and still hand off to the member.",
-                "error": None,
+                "reason": "No current Chatwoot conversation; conversation was not opened.",
             },
             ensure_ascii=False,
         )
@@ -180,20 +175,21 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
     if notified and opened:
         reason = (
             "Team notified and conversation opened for assignment. Send the member a "
-            "warm handoff message, then keep helping as usual."
-        )
-    elif notified:
-        reason = (
-            "Team notified, but the conversation could not be opened for assignment. "
-            "Still hand off to the member warmly, then keep helping as usual."
+            "warm handoff message this turn; further inbound messages stay silent while "
+            "status is open."
         )
     elif opened:
         reason = (
             "Conversation opened for assignment, but the internal note could not be "
-            "posted. Still hand off to the member warmly, then keep helping as usual."
+            "posted. Still send the member a warm handoff message this turn; further "
+            "inbound messages stay silent while status is open."
+        )
+    elif notified:
+        reason = (
+            "Team notified, but the conversation could not be opened for assignment."
         )
     else:
-        reason = "Chatwoot could not be updated; still hand off to the member warmly, then keep helping as usual."
+        reason = "Chatwoot could not open the conversation for assignment."
 
     return json.dumps(
         {
@@ -201,7 +197,6 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
             "notified": notified,
             "opened": opened,
             "reason": reason,
-            "error": None,
         },
         ensure_ascii=False,
     )
@@ -212,14 +207,14 @@ def crwd_handoff_tool(args: Dict[str, Any], **_kw: Any) -> str:
 CRWD_HANDOFF_SCHEMA = {
     "name": "crwd_handoff",
     "description": (
-        "Loop a human into the CURRENT CRWD conversation (frustration/anger, "
-        "repeated unresolved issue, rejected submission, money/account dispute, "
-        "or an out-of-scope-but-relevant question you can't safely answer). It "
-        "posts an internal note for the team and opens the conversation so it "
-        "gets assigned to an agent. You must still send the member a short, warm "
-        "'looping in a human' message yourself, and you keep answering the thread "
-        "afterwards — the human joins you rather than replacing you. Safe to call "
-        "even outside Chatwoot: it no-ops and tells you to hand off anyway."
+        "Loop a human into the CURRENT CRWD conversation after the matching "
+        "skill couldn't resolve it (unresolved frustration, repeated issue, "
+        "rejected submission, money/account dispute, or a CRWD question you "
+        "still can't safely answer). Don't call this because a question is "
+        "slightly unfamiliar. It posts an internal note for the team and opens "
+        "the conversation so it gets assigned to an agent. Only send the member "
+        "a handoff message when this returns opened:true. After status is open, "
+        "the bot stays silent on further inbound messages."
     ),
     "parameters": {
         "type": "object",

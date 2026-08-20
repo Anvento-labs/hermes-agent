@@ -163,9 +163,9 @@ For the deeper lifecycle detail, load
 - Don't quote a gig's payout/deadline from memory — look it up.
 - **Gig SMS while you are already helping with gigs:** if they mention a text
   about a gig, load `skill_view("crwd-reference", "references/company-facts.md")`
-  and match the sender by last 10 digits. An official CRWD number is not a scam
-  just because they don't see the gig in the app yet — confirm the sender, then
-  look the gig up as usual. Do not own "is this number CRWD?" as a discovery
+  and match the sender by last 10 digits. A matching official number is still
+  from CRWD even if they don't see the gig in the app yet — confirm the sender,
+  then look the gig up as usual. Do not own "is this number CRWD?" as a discovery
   trigger; that is `crwd-reference`.
 - **Membership lists go stale** when the member joins or leaves between messages. Never
   reuse a previous message's `get_user_gigs` / `get_user_gig_status` /

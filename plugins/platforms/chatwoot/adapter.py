@@ -945,10 +945,20 @@ class ChatwootAdapter(BasePlatformAdapter):
         except Exception:
             logger.debug("[chatwoot] failed to bind webhook CRWD hint", exc_info=True)
         try:
+            from plugins.platforms.chatwoot import ai_mode
+
+            # Human owns the thread — no canned reply and no LLM.
+            if await ai_mode.maybe_skip_handoff(self, event):
+                return
+        except Exception:
+            logger.debug("[chatwoot] handoff gate failed", exc_info=True)
+            return
+        try:
             from plugins.platforms.chatwoot import unregistered
 
             # Confirmed-unregistered contacts get a canned signup reply +
-            # label instead of an agent turn (no LLM spend).
+            # label instead of an agent turn (no LLM spend). Runs even when
+            # ai_mode is off.
             if await unregistered.maybe_short_circuit(self, event):
                 return
         except Exception:
