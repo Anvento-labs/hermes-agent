@@ -46,7 +46,7 @@ and injected as `[CRWD gig context]` on Chatwoot gig-related turns.
 Progress sources:
 
 - Enrollment / payout: `added_crwd_members`, `user_product_purchases`, `crwds`
-- Receipt / review / completion: Hermes **`proof_submissions` only** (not app
+- Receipt / review / completion: **`proof_submissions` only** (not app
   `gig_store_orders` / `gig_product_reviews` / `order_receipt_reviews`)
 
 App-only receipt uploads do not advance coach stage until a matching chat
