@@ -87,13 +87,17 @@ class TestHandler:
         monkeypatch.delenv("CHATWOOT_BASE_URL", raising=False)
         out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
         assert out["notified"] is False
-        assert out["error"] is None
+        assert out["opened"] is False
+        assert "not opened" in out["reason"]
+        assert "error" not in out
 
     def test_noop_when_no_conversation(self, chatwoot_env):
         with patch.object(t, "_resolve_conversation", return_value=(None, None)):
             out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
         assert out["notified"] is False
-        assert out["error"] is None
+        assert out["opened"] is False
+        assert "not opened" in out["reason"]
+        assert "error" not in out
 
     def test_success_path(self, chatwoot_env):
         with patch.object(t, "_resolve_conversation", return_value=("1", "42")), patch.object(
@@ -102,6 +106,8 @@ class TestHandler:
             out = json.loads(t.crwd_handoff_tool({"reason": "rejected submission", "summary": "s"}))
         assert out["notified"] is True
         assert out["opened"] is True
+        assert "warm handoff message" in out["reason"]
+        assert "error" not in out
         post.assert_called_once()
         assert post.call_args.args[0] == "1"
         assert post.call_args.args[1] == "42"
@@ -112,28 +118,30 @@ class TestHandler:
             t, "_post_private_note", return_value=(False, "HTTP 403")
         ), patch.object(t, "_open_conversation", return_value=(True, "")) as opener:
             out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
-        # Never a hard error — the coach still hands off to the member.
         assert out["notified"] is False
         assert out["opened"] is True
-        assert out["error"] is None
+        assert "warm handoff message" in out["reason"]
+        assert "error" not in out
         opener.assert_called_once()
 
-    def test_open_failure_degrades_gracefully(self, chatwoot_env):
+    def test_open_failure_no_warm_handoff(self, chatwoot_env):
         with patch.object(t, "_resolve_conversation", return_value=("1", "42")), patch.object(
             t, "_post_private_note", return_value=(True, "")
         ), patch.object(t, "_open_conversation", return_value=(False, "HTTP 500")):
             out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
         assert out["notified"] is True
         assert out["opened"] is False
-        assert out["error"] is None
+        assert "warm handoff" not in out["reason"].lower()
+        assert "error" not in out
 
-    def test_both_failures_degrade_gracefully(self, chatwoot_env):
+    def test_both_failures_no_warm_handoff(self, chatwoot_env):
         with patch.object(t, "_resolve_conversation", return_value=("1", "42")), patch.object(
             t, "_post_private_note", return_value=(False, "boom")
         ), patch.object(t, "_open_conversation", return_value=(False, "boom")):
             out = json.loads(t.crwd_handoff_tool({"reason": "angry"}))
         assert out["notified"] is False and out["opened"] is False
-        assert out["error"] is None
+        assert "warm handoff" not in out["reason"].lower()
+        assert "error" not in out
 
 
 class TestChatwootCalls:

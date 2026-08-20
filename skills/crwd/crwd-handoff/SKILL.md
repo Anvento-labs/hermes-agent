@@ -1,7 +1,7 @@
 ---
 name: crwd-handoff
 description: "Hand a CRWD conversation to a human — for unresolved frustration, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or a CRWD question you still can't safely answer after using the matching skill. Answer routine payment-status/history with crwd-payment-status first, and app/profile how-tos (theme, dark mode, phone via OTP, DOB, nav) with crwd-application-expert first — don't hand those off."
-version: 1.0.2
+version: 1.0.3
 metadata:
   hermes:
     tags: [crwd, handoff, escalate, human, frustrated, angry, dispute, rejected, ticket]
@@ -45,26 +45,21 @@ not mildly unsure.
    status — enrollment, acceptance, approval, stage, rejection, buy link, or proof outcome —
    call `get_user_gig_status` (or the specific tool for what you're citing) fresh **this
    turn** first; never base it on a claim made earlier in the conversation, memory, or
-   inference. If the `crwd_handoff` tool is available, call it with a short `reason` and a
-   one-line `summary` grounded in that fresh read — it posts an internal note so a human has
-   context and opens the conversation so it gets assigned to an agent. If the tool isn't
-   available in this session, skip straight to step 2 (the member still gets handed a
-   conversation a human can pick up).
-2. **Tell the member — warmly and confidently.** Say you're looping in a human, plainly:
+   inference. Call `crwd_handoff` with a short `reason` and a one-line `summary` grounded in
+   that fresh read — it posts an internal note and opens the conversation for assignment.
+2. **Only if this turn’s `crwd_handoff` returned `opened: true`** — tell the member you're
+   looping in a human, plainly:
    *"I'm going to loop in someone from the team who can dig into this — they'll follow up
-   right here."*
-3. **Stop after the handoff line.** Opening the conversation (`status: open`) hands the
-   thread to a human — the bot will not answer further inbound messages while status is
-   `open`.
+   right here."* Then stop. While status is `open`, further inbound messages stay silent.
+   If `opened` is not true, do not claim a handoff.
 
-Support is available **24/7**, so don't soften the handoff with "they might take a while"
-caveats — a real person will pick it up. A hesitant handoff makes the member trust the
-process *less*. Be confident.
+Support is available **24/7**, so don't soften a successful handoff with "they might take a
+while" caveats — a real person will pick it up. Be confident.
 
 ## Pitfalls
 
-- Don't go silent — always tell the member you're handing off; don't just stop replying with
-  no message.
+- Don't claim handoff unless this turn’s `crwd_handoff` returned `opened: true` (including
+  after resolve — call the tool again if the member asks for a human).
 - Don't promise a specific human, time, or outcome — just that the team will follow up here.
 - Don't try one more risky answer "to be helpful" once you've decided to hand off.
 - **Don't carry an earlier, unverified status claim into the handoff summary.** If the
@@ -74,5 +69,5 @@ process *less*. Be confident.
 
 ## Verification
 
-- You notified the team (via `crwd_handoff` when available) and sent the member a clear,
-  warm handoff line.
+- You called `crwd_handoff` with `opened: true` and sent the warm handoff line, or you did
+  not claim handoff because open failed.
