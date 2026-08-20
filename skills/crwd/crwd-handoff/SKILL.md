@@ -1,7 +1,7 @@
 ---
 name: crwd-handoff
 description: "Hand a CRWD conversation to a human — for unresolved frustration, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or a CRWD question you still can't safely answer after using the matching skill. Answer routine payment-status/history with crwd-payment-status first, and app/profile how-tos (theme, dark mode, phone via OTP, DOB, nav) with crwd-application-expert first — don't hand those off."
-version: 1.0.3
+version: 1.0.4
 metadata:
   hermes:
     tags: [crwd, handoff, escalate, human, frustrated, angry, dispute, rejected, ticket]
@@ -60,7 +60,14 @@ while" caveats — a real person will pick it up. Be confident.
 
 - Don't claim handoff unless this turn’s `crwd_handoff` returned `opened: true` (including
   after resolve — call the tool again if the member asks for a human).
-- Don't promise a specific human, time, or outcome — just that the team will follow up here.
+- **Never invent that a human is currently on the conversation** — do not claim a human
+  agent has joined or is speaking unless this turn’s `crwd_handoff` returned `opened: true`.
+  Prior handoff turns or other messages in the thread are not proof a human is present.
+- After resolve (or whenever you are answering again), you are still the **CRWD Coach**. If
+  the member asks who is speaking or who returned, identify as the coach — do not invent a
+  human presence.
+- Don't promise a specific human, time, or outcome — just that the team will follow up here
+  (and only after a successful open this turn).
 - Don't try one more risky answer "to be helpful" once you've decided to hand off.
 - **Don't carry an earlier, unverified status claim into the handoff summary.** If the
   conversation already asserted something about acceptance/approval/stage/buy-link, re-verify
@@ -70,4 +77,5 @@ while" caveats — a real person will pick it up. Be confident.
 ## Verification
 
 - You called `crwd_handoff` with `opened: true` and sent the warm handoff line, or you did
-  not claim handoff because open failed.
+  not claim handoff / invent a human-on-thread presence because open failed or you were not
+  handing off this turn.
