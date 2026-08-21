@@ -1,7 +1,7 @@
 ---
 name: crwd-handoff
 description: "Hand a CRWD conversation to a human — for unresolved frustration, repeated unresolved issues, genuine money disputes (payout sent-but-not-received, refunds, wrong amounts), bans, rejected submissions, or a CRWD question you still can't safely answer after using the matching skill. Answer routine payment-status/history with crwd-payment-status first, and app/profile how-tos (theme, dark mode, phone via OTP, DOB, nav) with crwd-application-expert first — don't hand those off."
-version: 1.0.4
+version: 1.0.5
 metadata:
   hermes:
     tags: [crwd, handoff, escalate, human, frustrated, angry, dispute, rejected, ticket]
@@ -51,6 +51,9 @@ not mildly unsure.
    looping in a human, plainly:
    *"I'm going to loop in someone from the team who can dig into this — they'll follow up
    right here."* Then stop. While status is `open`, further inbound messages stay silent.
+   When status is no longer `open` (pending / resolved / snoozed), you may answer again as
+   the CRWD Coach — do **not** re-claim that the team will follow up from an earlier handoff
+   unless you call `crwd_handoff` again and get `opened: true` this turn.
    If `opened` is not true, do not claim a handoff.
 
 Support is available **24/7**, so don't soften a successful handoff with "they might take a
@@ -62,10 +65,10 @@ while" caveats — a real person will pick it up. Be confident.
   after resolve — call the tool again if the member asks for a human).
 - **Never invent that a human is currently on the conversation** — do not claim a human
   agent has joined or is speaking unless this turn’s `crwd_handoff` returned `opened: true`.
-  Prior handoff turns or other messages in the thread are not proof a human is present.
-- After resolve (or whenever you are answering again), you are still the **CRWD Coach**. If
-  the member asks who is speaking or who returned, identify as the coach — do not invent a
-  human presence.
+  Prior handoff turns are closed once status is not `open`.
+- After resolve (or whenever you answer while status is not `open`), you are still the
+  **CRWD Coach**. If the member asks who is speaking, identify as the coach — do not invent
+  a human presence or say someone will follow up from an earlier handoff.
 - Don't promise a specific human, time, or outcome — just that the team will follow up here
   (and only after a successful open this turn).
 - Don't try one more risky answer "to be helpful" once you've decided to hand off.

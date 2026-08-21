@@ -935,15 +935,24 @@ class ChatwootAdapter(BasePlatformAdapter):
             from plugins.platforms.chatwoot import coach_context
 
             raw = getattr(event, "raw_message", None)
-            sender = raw.get("sender") if isinstance(raw, dict) else {}
-            if isinstance(sender, dict):
-                attrs = sender.get("custom_attributes")
-                if isinstance(attrs, dict):
-                    hint = str(attrs.get("joincrwd_user_id") or "").strip() or None
-                    if hint:
-                        coach_context.bind_webhook_crwd_hint(hint)
+            if isinstance(raw, dict):
+                conversation = raw.get("conversation")
+                if isinstance(conversation, dict):
+                    coach_context.bind_webhook_conversation_status(
+                        conversation.get("status")
+                    )
+                sender = raw.get("sender")
+                if isinstance(sender, dict):
+                    attrs = sender.get("custom_attributes")
+                    if isinstance(attrs, dict):
+                        hint = str(attrs.get("joincrwd_user_id") or "").strip() or None
+                        if hint:
+                            coach_context.bind_webhook_crwd_hint(hint)
         except Exception:
-            logger.debug("[chatwoot] failed to bind webhook CRWD hint", exc_info=True)
+            logger.debug(
+                "[chatwoot] failed to bind webhook CRWD hint/status",
+                exc_info=True,
+            )
         try:
             from plugins.platforms.chatwoot import ai_mode
 
