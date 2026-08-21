@@ -47,10 +47,17 @@ _webhook_crwd_hint: ContextVar[Optional[str]] = ContextVar(
     "chatwoot_webhook_crwd_hint", default=None
 )
 
+# Chatwoot conversation.status from the inbound webhook (per asyncio task).
+_webhook_conversation_status: ContextVar[Optional[str]] = ContextVar(
+    "chatwoot_webhook_conversation_status", default=None
+)
+
 # Set per turn when the inbound message asks about another member's account.
 _cross_user_request: ContextVar[bool] = ContextVar(
     "chatwoot_cross_user_request", default=False
 )
+
+_HANDOFF_ACTIVE_STATUS = "open"
 
 _OBJECT_ID_IN_MSG_RE = re.compile(r"\b[0-9a-fA-F]{24}\b")
 _USER_MEMBER_OID_RE = re.compile(
@@ -286,6 +293,44 @@ def reset_webhook_crwd_hint() -> None:
     _webhook_crwd_hint.set(None)
 
 
+def bind_webhook_conversation_status(status: Optional[str]) -> None:
+    """Bind Chatwoot ``conversation.status`` from the inbound webhook."""
+    text = str(status or "").strip().lower() or None
+    _webhook_conversation_status.set(text)
+
+
+def webhook_conversation_status() -> Optional[str]:
+    """Return the bound conversation status for this turn, or None."""
+    try:
+        return _webhook_conversation_status.get()
+    except LookupError:
+        return None
+
+
+def reset_webhook_conversation_status() -> None:
+    """Test helper — clear the per-turn conversation status."""
+    _webhook_conversation_status.set(None)
+
+
+def _status_handoff_guard_lines(status: Optional[str]) -> List[str]:
+    """Short rules when status is set and not open (coach may speak again)."""
+    text = str(status or "").strip().lower()
+    if not text or text == _HANDOFF_ACTIVE_STATUS:
+        return []
+    return [
+        f"[Chatwoot conversation] status: {text}.",
+        (
+            "- You are answering this turn, so human ownership is not active — "
+            "any prior handoff is closed and the team is not looking into it now."
+        ),
+        (
+            "- Earlier follow-up / 'looped in the team' lines in this chat are "
+            "history only. Only claim team follow-up if crwd_handoff returns "
+            "opened: true this turn. If asked who is speaking, you are the CRWD Coach."
+        ),
+    ]
+
+
 # --- Chatwoot contact read --------------------------------------------------
 
 def _get_contact(account_id: str, contact_id: str) -> Optional[Dict[str, Any]]:
@@ -467,14 +512,16 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
         reset_cross_user_request()
         if not _is_chatwoot(kwargs.get("platform")):
             return None
+        status = webhook_conversation_status()
+        status_lines = _status_handoff_guard_lines(status)
         if not os.getenv("CRWD_MONGO_URI"):
-            return None
+            return {"context": "\n".join(status_lines)} if status_lines else None
         contact_id = str(kwargs.get("sender_id") or "").strip()
         if not contact_id:
-            return None
+            return {"context": "\n".join(status_lines)} if status_lines else None
         crwd_id = resolve_member_crwd_id(contact_id)
         if not crwd_id:
-            return None
+            return {"context": "\n".join(status_lines)} if status_lines else None
         user_message = str(kwargs.get("user_message") or "")
         cross_user = message_requests_other_member(user_message, crwd_id)
         if cross_user:
@@ -541,6 +588,8 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
                 ),
                 "- Do NOT call crwd_db or reveal any of the authenticated member's data in this turn.",
             ])
+        if status_lines:
+            lines.extend(status_lines)
         return {"context": "\n".join(lines)}
     except Exception as exc:  # never break a turn over context injection
         logger.debug("[crwd-coach-ctx] hook failed: %s", exc)

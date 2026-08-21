@@ -18,9 +18,11 @@ from plugins.platforms.chatwoot import coach_context as cc
 def _clear_cache():
     cc._reset_cache()
     cc.reset_cross_user_request()
+    cc.reset_webhook_conversation_status()
     yield
     cc._reset_cache()
     cc.reset_cross_user_request()
+    cc.reset_webhook_conversation_status()
 
 
 @pytest.fixture
@@ -319,3 +321,49 @@ class TestHook:
         matched, kind = cc.message_requests_unauthorized_info("what is my phone number")
         assert matched is False
         assert kind == ""
+
+
+class TestStatusHandoffGuard:
+    def test_resolved_injects_no_claim_rule_with_member(self, chatwoot_env):
+        cc.bind_webhook_conversation_status("resolved")
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert "status: resolved" in out["context"]
+        assert "prior handoff is closed" in out["context"]
+        assert "history only" in out["context"]
+        assert "opened: true this turn" in out["context"]
+        assert "CRWD Coach" in out["context"]
+        assert "Authenticated user_id: abc123" in out["context"]
+
+    def test_resolved_injects_rule_without_member_id(self, chatwoot_env):
+        cc.bind_webhook_conversation_status("resolved")
+        with patch.object(cc, "resolve_member_crwd_id", return_value=None):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert "status: resolved" in out["context"]
+        assert "prior handoff is closed" in out["context"]
+
+    def test_open_status_skips_claim_block(self, chatwoot_env):
+        cc.bind_webhook_conversation_status("open")
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert "prior handoff is closed" not in out["context"]
+        assert "status: open" not in out["context"]
+
+    def test_missing_status_skips_claim_block(self, chatwoot_env):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ):
+            out = cc.member_context_hook(platform="chatwoot", sender_id="55")
+        assert out is not None
+        assert "prior handoff is closed" not in out["context"]
+
+    def test_bind_normalizes_status(self):
+        cc.bind_webhook_conversation_status("  Resolved ")
+        assert cc.webhook_conversation_status() == "resolved"
