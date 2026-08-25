@@ -124,21 +124,21 @@ Read the band off `new_score`:
 | 60–85 | High — manual approval required | `risk-high` |
 | 85–100 | Critical — block or reject | `risk-critical` |
 
-Bands are **mutually exclusive**, so apply them with `replace`:
+Bands are **mutually exclusive**. Change only the band title:
 
 ```
-chatwoot_labels(action="assign_labels", replace=true,
-                labels=["risk-high", ...every other label the conversation should keep])
+chatwoot_labels(action="get_conversation_labels")
+chatwoot_labels(action="assign_labels",
+                add=["risk-high"],
+                remove=["risk-low", "risk-medium", "risk-critical"])
 ```
 
-`replace: true` overwrites the whole set — merge would leave two bands on the
-conversation at once. So **pass the topic labels through too** (`proof-submission`,
-`handoff-escalation`, …). Read them first with `get_all_labels` if you're unsure
-what's there.
+Only add the new band and remove the previous `risk-*` title(s). Do **not**
+pass `replace` or rewrite the full set — topic labels, `unregistered-user`,
+`scam`, and anything a human or Chatwoot automation applied must stay.
 
-The band **persists across turns**: the automatic labeler re-assigns labels with
-`replace=true` every turn from its own classification, and preserves `risk-*`
-rather than clearing it. So set the band once and it stays until you change it.
+The band **persists across turns** until you change it. Conversation labeling
+no longer rewrites the full set each turn.
 
 Even so, **the score is the record, not the label**. `custom_attributes.risk_score`
 on the contact is durable; the band is only ever a view of it, and is always
@@ -158,8 +158,10 @@ Score `+50` when the member is clearly abusing the channel:
 **This cannot be recorded on the proof table** — `store_proof` requires a real
 `proof_type` and a normalizable id, and a scam message has neither. The score *is*
 the record. So: `crwd_risk_score(delta=50, reason="scam signals")`, `crwd_handoff`,
-and let the labeler tag it — it classifies `scam` itself from the message, so you
-don't need to apply that label; just set the band.
+and let `chatwoot-conversation-labels` tag `scam` when this turn's message
+meets that skill's add rule. You do not apply `scam` from this skill; just
+set the band. `scam` is turn-scoped — do not rely on it surviving past this
+turn.
 
 Be conservative. A confused member pasting a weird link is not a scammer; a member
 asking an unrelated / non-CRWD question is not channel abuse. Score this only when
@@ -174,8 +176,8 @@ you'd be comfortable defending it to the member's face.
 - **Don't score `clean_match` or coaching outcomes.** Blurry photos, missing links,
   and incomplete submissions are not risk.
 - **Don't pass an absolute score** to `crwd_risk_score` — it takes an increment.
-- **Don't merge band labels** — `replace: true` with the full set, or the
-  conversation accumulates every band the member has ever been in.
+- **Don't leave two `risk-*` titles on** — remove the old band when you add
+  the new one. Never `replace` the full conversation label set.
 - **Don't re-apply the repeated-failures penalty** on every later failure.
 - **Don't reverse a score to be kind.** Negative deltas exist, but a member talking
   their way out of a verdict is the oldest attack there is. A human adjusts.
@@ -188,8 +190,8 @@ you'd be comfortable defending it to the member's face.
   marked with `mark_proof_risk_scored`.
 - The delta came from the table and the tier came from a `count`, not a guess.
 - Zero-risk reason codes scored nothing.
-- A `risk-*` label matching `new_score` was applied with `replace: true` and the
-  topic labels preserved. (It may not survive the next turn — see the limitation
-  above. The score is the record; the label is a convenience.)
+- A `risk-*` label matching `new_score` was applied with `add`/`remove` only
+  (old band removed, new band added). Topic labels were left alone. The score
+  is the record; the label is a convenience.
 - `risk-high` / `risk-critical` were handed off.
 - **No member-facing message referenced the score, the band, or a label.**

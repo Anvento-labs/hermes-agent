@@ -61,9 +61,9 @@ def _clean(monkeypatch):
 def assigned(monkeypatch):
     calls = []
 
-    def fake_assign(account_id, conversation_id, labels, replace):
-        calls.append((account_id, conversation_id, labels, replace))
-        return {"success": True, "labels": labels, "error": None}
+    def fake_assign(account_id, conversation_id, add, remove):
+        calls.append((account_id, conversation_id, add, remove))
+        return {"success": True, "labels": add, "error": None}
 
     from plugins.platforms.chatwoot import labels_tool
 
@@ -108,7 +108,7 @@ def test_unregistered_sends_reply_and_label(monkeypatch, assigned):
     chat_id, text = adapter.sent[0]
     assert chat_id == "1:42"
     assert "https://live-staging.joincrwd.com/signup" in text
-    assert assigned == [("1", "42", ["unregistered-user"], False)]
+    assert assigned == [("1", "42", ["unregistered-user"], [])]
 
 
 def test_cooldown_suppresses_second_reply(monkeypatch, assigned):

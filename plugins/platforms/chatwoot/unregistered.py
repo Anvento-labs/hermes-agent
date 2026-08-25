@@ -176,7 +176,7 @@ async def _maybe_short_circuit(adapter: Any, event: Any) -> bool:
                 str(ctx["account_id"]),
                 str(conversation_id),
                 [UNREGISTERED_LABEL],
-                False,
+                [],
             )
             if not result.get("success"):
                 logger.warning("[crwd-unregistered] label assign failed: %s",

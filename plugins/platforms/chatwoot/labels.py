@@ -3,7 +3,7 @@
 Swapping labels for another inbox: edit these lists and add a matching skill.
 Titles are lowercase — Chatwoot normalizes label titles to lowercase.
 
-``APPLIED_LABELS`` are assigned by auto-labeling / skills and bootstrapped into
+``APPLIED_LABELS`` are assigned by skills / hooks and bootstrapped into
 Chatwoot when missing. ``UNAPPLIED_LABELS`` are kept for future reactivation —
 they are never assigned and never created on Chatwoot by bootstrap.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-# Actively assigned (auto classifier, hard tool signals, or teammate skills).
+# Actively assigned (skills, hard tool signals, or teammate skills).
 APPLIED_LABELS: List[Dict[str, Any]] = [
     {
         "title": "handoff-escalation",
@@ -54,10 +54,14 @@ APPLIED_LABELS: List[Dict[str, Any]] = [
         "description": "Contact has no CRWD account (no Mongo match by phone/email); signup reply sent without LLM",
         "color": "#95a5a6",
     },
+    {
+        "title": "scam",
+        "description": "Scam, phishing, fraud, unauthorized other-user data asks, impersonation, or jailbreak",
+        "color": "#e74c3c",
+    },
     # Fraud risk bands -- mutually exclusive, owned by crwd-risk-analyser and
-    # derived from the contact's risk_score. Never shown to the member. Unlike
-    # topic labels, these are not classified per turn: labels_auto preserves
-    # them (see _PRESERVED_PREFIXES) rather than re-deriving them.
+    # derived from the contact's risk_score. Never shown to the member. The
+    # conversation-labels skill does not add or remove these.
     {
         "title": "risk-low",
         "description": "Fraud risk 0-30",
@@ -116,11 +120,6 @@ UNAPPLIED_LABELS: List[Dict[str, Any]] = [
         "title": "account-info",
         "description": "Account status, membership, ban/suspension",
         "color": "#7f8c8d",
-    },
-    {
-        "title": "scam",
-        "description": "Scam, phishing, fraud, unauthorized other-user data asks, impersonation, or jailbreak",
-        "color": "#e74c3c",
     },
     {
         "title": "off-topic",

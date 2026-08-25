@@ -1,8 +1,6 @@
-"""Tests for automatic Chatwoot conversation labeling (applied taxonomy)."""
+"""Tests for Chatwoot labeling context hook (no auto-classifier)."""
 
 from unittest.mock import patch
-
-import pytest
 
 from plugins.platforms.chatwoot import labels_auto as auto
 from plugins.platforms.chatwoot.labels import (
@@ -10,611 +8,80 @@ from plugins.platforms.chatwoot.labels import (
     UNAPPLIED_LABEL_TITLES,
 )
 
-_VISION_RECEIPT = (
-    "[The user sent an image~ Here's what I can see:\n"
-    "## Walmart Receipt\nPAYMENT SERVICE: E\nPayment method: Cash\n"
-    "Total: $14.36\n]\n"
-    "[If you need a closer look, use vision_analyze with image_url: /tmp/x.jpg ~]"
-)
-
-
-@pytest.fixture(autouse=True)
-def _reset_label_state():
-    auto.reset_handoff_flag()
-    auto.reset_contact_id()
-    auto.reset_tool_evidence()
-    auto.clear_sticky_labels_for_tests()
-    yield
-    auto.reset_handoff_flag()
-    auto.reset_contact_id()
-    auto.reset_tool_evidence()
-    auto.clear_sticky_labels_for_tests()
-
-
-@pytest.fixture(autouse=True)
-def _no_new_user_by_default(monkeypatch):
-    """Most tests are about intent/tools — keep new-user off unless asserted."""
-    monkeypatch.setattr(auto, "_member_has_completed_gig", lambda _cid: True)
-
-
-def _mock_acts(*acts: str, confidence: str = "high"):
-    """Patch classify_acts_with_auxiliary to return fixed dialogue acts."""
-    return patch.object(
-        auto,
-        "classify_acts_with_auxiliary",
-        return_value={
-            "acts": list(acts),
-            "primary": acts[0] if acts else "chitchat",
-            "confidence": confidence,
-            "reasons": ["test"],
-        },
-    )
-
 
 class TestTaxonomySets:
     def test_applied_and_unapplied_disjoint(self):
         assert APPLIED_LABEL_TITLES.isdisjoint(UNAPPLIED_LABEL_TITLES)
 
-    def test_new_titles_are_applied(self):
+    def test_owned_titles_are_applied(self):
         for title in (
             "payment-issue",
+            "app-help",
+            "new-user",
             "proof-acceptance",
             "proof-rejection",
-            "new-user",
+            "gig-complete",
+            "handoff-escalation",
+            "scam",
         ):
             assert title in APPLIED_LABEL_TITLES
             assert title not in UNAPPLIED_LABEL_TITLES
 
-    def test_unapplied_includes_former_topics(self):
+    def test_unapplied_excludes_scam(self):
+        assert "scam" not in UNAPPLIED_LABEL_TITLES
         for title in (
             "mid-gig-support",
             "proof-submission",
             "gig-discovery",
             "general-inquiry",
-            "payment-payout",
-            "account-eligibility",
-            "account-info",
-            "scam",
             "off-topic",
         ):
             assert title in UNAPPLIED_LABEL_TITLES
 
 
-class TestMemberIntentText:
-    def test_strips_vision_ocr(self):
-        intent = auto._member_intent_text(_VISION_RECEIPT)
-        assert intent == ""
-        assert "payment" not in intent.lower()
-
-    def test_keeps_typed_caption(self):
-        msg = f"{_VISION_RECEIPT}\n\nwhen will I get paid?"
-        assert auto._member_intent_text(msg) == "when will I get paid?"
-
-    def test_llm_placeholder_for_bare_image(self):
-        assert auto._member_message_for_llm(_VISION_RECEIPT) == "(image attachment)"
-
-
-class TestAppliedIntentLabels:
-    def test_payment_issue(self):
-        with _mock_acts("payout"):
-            labels = auto.classify_conversation_labels("did I get paid yet?")
-        assert labels == ["payment-issue"]
-
-    def test_multi_label_payment_and_app_help(self):
-        with _mock_acts("payout", "app_nav"):
-            labels = auto.classify_conversation_labels(
-                "my payout page won't load, when will I get paid?"
-            )
-        assert "payment-issue" in labels
-        assert "app-help" in labels
-
-    def test_app_help(self):
-        with _mock_acts("app_nav"):
-            labels = auto.classify_conversation_labels("where is the Explore tab?")
-        assert labels == ["app-help"]
-
-    def test_llm_disabled_emits_no_intent_topic(self):
-        result = auto.classify_conversation(
-            "did I get paid yet?",
-            allow_llm=False,
-        )
-        assert "payment-issue" not in result.labels
-        assert "llm:disabled" in result.reasons
-
-
-class TestUnappliedNotAssigned:
-    def test_gig_discovery_intent_emits_no_topic(self):
-        with _mock_acts("browse_open_gigs"):
-            labels = auto.classify_conversation_labels("what gigs are near me?")
-        assert "gig-discovery" not in labels
-        assert labels == []
-
-    def test_general_inquiry_emits_no_topic(self):
-        with _mock_acts("general_inquiry"):
-            labels = auto.classify_conversation_labels("what is crwd?")
-        assert "general-inquiry" not in labels
-        assert labels == []
-
-    def test_scam_emits_no_topic(self):
-        with _mock_acts("scam"):
-            labels = auto.classify_conversation_labels("this looks like phishing")
-        assert "scam" not in labels
-
-    def test_proof_question_emits_no_proof_submission(self):
-        with _mock_acts("proof"):
-            labels = auto.classify_conversation_labels("how do I submit proof?")
-        assert "proof-submission" not in labels
-        assert "mid-gig-support" not in labels
-
-    def test_account_info_emits_no_topic(self):
-        with _mock_acts("account_status"):
-            labels = auto.classify_conversation_labels("what is my name?")
-        assert "account-info" not in labels
-        assert labels == []
-
-    def test_eligibility_emits_no_topic(self):
-        with _mock_acts("eligibility"):
-            labels = auto.classify_conversation_labels("I am not eligible")
-        assert "account-eligibility" not in labels
-        assert labels == []
-
-
-class TestGatesNoTopic:
-    def test_greeting_is_no_topic(self):
-        labels = auto.classify_conversation_labels("hello there")
-        assert labels == []
-
-    def test_hi_with_coach_welcome_not_payment(self):
-        welcome = (
-            "Hey! I'm your CRWD Coach — here to help you finish gigs and get paid. "
-            "What do you need?"
-        )
-        labels = auto.classify_conversation_labels("hi", assistant_response=welcome)
-        assert labels == []
-        assert "payment-issue" not in labels
-
-    def test_who_are_you_is_no_topic(self):
-        labels = auto.classify_conversation_labels("Who are you?")
-        assert labels == []
-
-    def test_empty_is_no_topic(self):
-        result = auto.classify_conversation(user_message="")
-        assert result.labels == []
-        assert "gate:empty->no-topic" in result.reasons
-
-    def test_vision_only_receipt_is_no_topic(self):
-        result = auto.classify_conversation(_VISION_RECEIPT, allow_llm=False)
-        assert result.labels == []
-        assert "payment-issue" not in result.labels
-        assert "gate:empty->no-topic" in result.reasons
-
-
-class TestHandoffAndProofVerdicts:
-    def test_handoff_only_when_requested(self):
-        with _mock_acts("chitchat"):
-            labels = auto.classify_conversation_labels(
-                "I am frustrated", handoff_requested=True
-            )
-        assert "handoff-escalation" in labels
-
-    def test_no_handoff_without_tool(self):
-        with _mock_acts("chitchat"):
-            labels = auto.classify_conversation_labels("I am frustrated")
-        assert "handoff-escalation" not in labels
-
-    def test_proof_acceptance_from_store_proof(self):
-        evidence = [
-            {
-                "tool": "crwd_db",
-                "action": "store_proof",
-                "proof_status": "accepted",
-                "is_gig_completed": "false",
-            },
-            {
-                "tool": "crwd_db",
-                "action": "store_proof",
-                "proof_status": "accepted",
-            },
-        ]
-        with _mock_acts("proof"):
-            labels = auto.classify_conversation_labels(
-                "here is my receipt",
-                tool_evidence=evidence,
-            )
-        assert "proof-acceptance" in labels
-        assert "proof-rejection" not in labels
-        assert "payment-issue" not in labels
-
-    def test_proof_rejection_if_any_rejected(self):
-        evidence = [
-            {"tool": "crwd_db", "action": "store_proof", "proof_status": "accepted"},
-            {"tool": "crwd_db", "action": "store_proof", "proof_status": "rejected"},
-        ]
-        with _mock_acts("proof"):
-            labels = auto.classify_conversation_labels(
-                "here is my receipt",
-                tool_evidence=evidence,
-            )
-        assert "proof-rejection" in labels
-        assert "proof-acceptance" not in labels
-
-    def test_record_tool_evidence_parses_store_proof_result(self):
-        auto.record_tool_evidence_hook(
-            tool_name="crwd_db",
-            args={"action": "store_proof", "status": "accepted"},
-            result='{"_type":"crwd_proof_stored","status":"rejected","is_gig_completed":false}',
-        )
-        evidence = auto.tool_evidence_this_turn()
-        assert evidence[-1]["proof_status"] == "rejected"
-
-
-class TestProofTurnSuppressesIntentTopics:
-    """Proof turns keep proof-* ; drop payment/app unless LLM acts keep them."""
-
-    _ACCEPTED = [
-        {
-            "tool": "crwd_db",
-            "action": "store_proof",
-            "proof_status": "accepted",
-            "is_gig_completed": "false",
-        },
-    ]
-    _REJECTED = [
-        {
-            "tool": "crwd_db",
-            "action": "store_proof",
-            "proof_status": "rejected",
-        },
-    ]
-
-    def test_empty_message_accepted_proof_no_payment(self):
-        labels = auto.classify_conversation_labels(
-            "",
-            tool_evidence=self._ACCEPTED,
-        )
-        assert "proof-acceptance" in labels
-        assert "payment-issue" not in labels
-        assert "app-help" not in labels
-
-    def test_empty_message_rejected_proof_no_payment(self):
-        labels = auto.classify_conversation_labels(
-            "",
-            tool_evidence=self._REJECTED,
-        )
-        assert "proof-rejection" in labels
-        assert "payment-issue" not in labels
-
-    def test_vision_ocr_accepted_proof_no_payment(self):
-        with _mock_acts("proof"):
-            labels = auto.classify_conversation_labels(
-                _VISION_RECEIPT,
-                tool_evidence=self._ACCEPTED,
-            )
-        assert "proof-acceptance" in labels
-        assert "payment-issue" not in labels
-
-    def test_vision_ocr_rejected_proof_no_payment(self):
-        with _mock_acts("proof"):
-            # Vision-only → empty intent gate; proof labels still attach.
-            labels = auto.classify_conversation_labels(
-                _VISION_RECEIPT,
-                tool_evidence=self._REJECTED,
-            )
-        assert "proof-rejection" in labels
-        assert "payment-issue" not in labels
-
-    def test_sticky_payment_suppressed_on_proof_turn(self):
-        result = auto.classify_conversation(
-            "ok",
-            tool_evidence=self._REJECTED,
-            allow_llm=False,
-            sticky_topics=["payment-issue"],
-            sticky_acts=["payout"],
-        )
-        assert "proof-rejection" in result.labels
-        assert "payment-issue" not in result.labels
-        assert any(r.startswith("proof_turn:suppress:") for r in result.reasons)
-
-    def test_payout_act_kept_with_proof_rejection(self):
-        with _mock_acts("payout"):
-            labels = auto.classify_conversation_labels(
-                "when will I get paid?",
-                tool_evidence=self._REJECTED,
-            )
-        assert "proof-rejection" in labels
-        assert "payment-issue" in labels
-
-    def test_missing_store_proof_status_reason(self):
-        evidence = [{"tool": "crwd_db", "action": "store_proof"}]
-        result = auto.classify_conversation(
-            "here is my receipt",
-            tool_evidence=evidence,
-            allow_llm=False,
-        )
-        assert "tool:store_proof:missing_status" in result.reasons
-        assert "proof-acceptance" not in result.labels
-        assert "proof-rejection" not in result.labels
-
-    def test_bare_vision_sticky_payment_not_inherited(self):
-        result = auto.classify_conversation(
-            _VISION_RECEIPT,
-            allow_llm=False,
-            sticky_topics=["payment-issue"],
-            sticky_acts=["payout"],
-        )
-        assert "payment-issue" not in result.labels
-        assert "gate:empty->no-topic" in result.reasons
-
-
-class TestNewUser:
-    def test_new_user_when_no_completed_gig(self, monkeypatch):
-        monkeypatch.setattr(auto, "_member_has_completed_gig", lambda _cid: False)
-        with _mock_acts("payout"):
-            labels = auto.classify_conversation_labels(
-                "did I get paid yet?",
-                contact_id="c1",
-            )
-        assert "payment-issue" in labels
-        assert "new-user" in labels
-
-    def test_no_new_user_when_completed(self, monkeypatch):
-        monkeypatch.setattr(auto, "_member_has_completed_gig", lambda _cid: True)
-        with _mock_acts("payout"):
-            labels = auto.classify_conversation_labels(
-                "did I get paid yet?",
-                contact_id="c1",
-            )
-        assert "new-user" not in labels
-
-    def test_unknown_completed_skips_new_user(self, monkeypatch):
-        monkeypatch.setattr(auto, "_member_has_completed_gig", lambda _cid: None)
-        with _mock_acts("payout"):
-            labels = auto.classify_conversation_labels(
-                "did I get paid yet?",
-                contact_id="c1",
-            )
-        assert "new-user" not in labels
-
-    def test_this_turn_gig_complete_clears_new_user(self, monkeypatch):
-        monkeypatch.setattr(auto, "_member_has_completed_gig", lambda _cid: False)
-        evidence = [
-            {
-                "tool": "crwd_db",
-                "action": "store_proof",
-                "proof_status": "accepted",
-                "is_gig_completed": "true",
-            },
-        ]
-        with _mock_acts("proof"):
-            labels = auto.classify_conversation_labels(
-                "here is my last proof",
-                contact_id="c1",
-                tool_evidence=evidence,
-            )
-        assert "new-user" not in labels
-        assert "proof-acceptance" in labels
-        assert "gig-complete" in labels
-
-    def test_gig_complete_only_when_is_gig_completed(self):
-        evidence = [
-            {
-                "tool": "crwd_db",
-                "action": "store_proof",
-                "proof_status": "accepted",
-                "is_gig_completed": "false",
-            },
-        ]
-        with _mock_acts("proof"):
-            labels = auto.classify_conversation_labels(
-                "here is my receipt",
-                tool_evidence=evidence,
-            )
-        assert "proof-acceptance" in labels
-        assert "gig-complete" not in labels
-
-
-class TestDialogueActMapping:
-    def test_payout_maps_to_payment_issue(self):
-        labels = auto.acts_to_labels(["payout"], "when paid?", "")
-        assert labels == ["payment-issue"]
-
-    def test_app_nav_maps_to_app_help(self):
-        labels = auto.acts_to_labels(["app_nav"], "where is explore?", "")
-        assert labels == ["app-help"]
-
-    def test_unapplied_acts_emit_nothing(self):
-        labels = auto.acts_to_labels(
-            ["browse_open_gigs", "general_inquiry", "scam", "proof", "chitchat"],
-            "whatever",
-            "",
-        )
-        assert labels == []
-
-
-class TestStickyAppliedOnly:
-    def test_sticky_keeps_payment_issue(self):
-        result = auto.classify_conversation(
-            "ok",
-            allow_llm=False,
-            sticky_topics=["payment-issue"],
-            sticky_acts=["payout"],
-        )
-        assert "payment-issue" in result.labels
-
-    def test_sticky_ignores_unapplied_topics(self):
-        result = auto.classify_conversation(
-            "ok",
-            allow_llm=False,
-            sticky_topics=["gig-discovery", "off-topic"],
-            sticky_acts=["browse_open_gigs"],
-        )
-        assert "gig-discovery" not in result.labels
-        assert "off-topic" not in result.labels
-
-
-class TestAuxiliaryActClassify:
-    def test_act_classify_uses_plain_json_not_tools(self):
-        mock_resp = type("R", (), {})()
-        mock_resp.choices = [
-            type("C", (), {"message": type("M", (), {"content": '{"acts":["app_nav"],"primary":"app_nav","confidence":"high","reasons":[]}'})()})()
-        ]
-        with patch("agent.auxiliary_client.call_llm", return_value=mock_resp) as call_llm:
-            result = auto.classify_acts_with_auxiliary("Member 1: where is home?")
-        assert result is not None
-        assert result["acts"] == ["app_nav"]
-        kwargs = call_llm.call_args.kwargs
-        assert "tools" not in kwargs
-        assert "tool_choice" not in kwargs
-
-
-class TestAutoLabelConversation:
-    @pytest.fixture
-    def chatwoot_env(self, monkeypatch):
-        monkeypatch.setenv("CHATWOOT_BASE_URL", "https://chat.example.com")
-        monkeypatch.setenv("CHATWOOT_AGENT_TOKEN", "agent-tok")
-        monkeypatch.setenv("CHATWOOT_ACCOUNT_ID", "1")
-
-    def test_skips_without_creds(self, monkeypatch):
-        monkeypatch.delenv("CHATWOOT_BASE_URL", raising=False)
-        out = auto.auto_label_conversation("hello")
-        assert out["skipped"] is True
-
-    def test_applies_payment_issue(self, chatwoot_env):
-        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=[],
-        ), patch.object(
-            auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": ["payment-issue"]},
-        ), _mock_acts("payout"), patch.object(
-            auto, "_assign_labels",
-            return_value={"success": True, "labels": ["payment-issue"], "error": None},
-        ) as assign:
-            out = auto.auto_label_conversation("when will I get paid?")
-        assert out["success"] is True
-        assert "payment-issue" in out["classified"]
-        assign.assert_called_once()
-        assert assign.call_args[0][2] == out["classified"]
-        assert assign.call_args[1]["replace"] is True
-
-    def test_handoff_preserved_while_status_open(self, chatwoot_env):
-        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=["handoff-escalation"],
-        ), patch.object(
-            auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": ["payment-issue"]},
-        ), _mock_acts("chitchat"), patch.object(
-            auto, "_assign_labels",
-            return_value={"success": True, "labels": [], "error": None},
-        ) as assign:
-            out = auto.auto_label_conversation("thanks for the help", handoff_requested=False)
-        assert "handoff-escalation" in out["classified"]
-        assert "handoff-escalation" in assign.call_args[0][2]
-
-    def test_handoff_cleared_when_not_preserved(self, chatwoot_env):
-        """When status is no longer open, _preserved_labels omits handoff."""
-        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=[],
-        ), patch.object(
-            auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": []},
-        ), _mock_acts("chitchat"), patch.object(
-            auto, "_assign_labels",
-            return_value={"success": True, "labels": [], "error": None},
-        ) as assign:
-            out = auto.auto_label_conversation("thanks for the help", handoff_requested=False)
-        assert "handoff-escalation" not in out["classified"]
-        assert "handoff-escalation" not in assign.call_args[0][2]
-
-    def test_risk_band_survives_a_later_turn(self, chatwoot_env):
-        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=["risk-high"],
-        ), patch.object(
-            auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": []},
-        ), _mock_acts("chitchat"), patch.object(
-            auto, "_assign_labels",
-            return_value={"success": True, "labels": [], "error": None},
-        ) as assign:
-            auto.auto_label_conversation("thanks for the update", handoff_requested=False)
-        assert "risk-high" in assign.call_args[0][2]
-
-    def test_gig_complete_does_not_survive_a_later_turn(self, chatwoot_env):
-        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=[],
-        ), patch.object(
-            auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": []},
-        ), _mock_acts("chitchat"), patch.object(
-            auto, "_assign_labels",
-            return_value={"success": True, "labels": [], "error": None},
-        ) as assign:
-            auto.auto_label_conversation("thanks for the update", handoff_requested=False)
-        assert "gig-complete" not in assign.call_args[0][2]
-
-    def test_preserved_labels_stay_out_of_sticky_topic_memory(self, chatwoot_env):
-        with patch.object(auto, "_resolve_conversation", return_value=("1", "42")), patch.object(
-            auto, "_preserved_labels", return_value=["risk-high"],
-        ), patch.object(
-            auto, "_create_labels_if_not_exists",
-            return_value={"success": True, "existing": []},
-        ), _mock_acts("payout"), patch.object(
-            auto, "_assign_labels",
-            return_value={"success": True, "labels": ["payment-issue"], "error": None},
-        ):
-            auto.auto_label_conversation("when will I get paid?")
-        stored = auto._get_sticky_topics("1", "42")
-        assert "risk-high" not in stored
-        assert "payment-issue" in stored
-
-
-class TestPreservedLabelsHelper:
-    def _labels_then_status(self, labels_payload, status):
-        """Return side_effect for _api_request: labels GET then conversation GET."""
-        def _side_effect(method, path, body=None):
-            if path.endswith("/labels"):
-                return True, labels_payload, ""
-            return True, {"payload": {"status": status}}, ""
-        return _side_effect
-
-    def test_handoff_preserved_when_status_open(self):
-        payload = {
-            "payload": [
-                "payment-issue",
-                "handoff-escalation",
-                "risk-high",
-                "gig-complete",
-                "off-topic",
-            ]
-        }
+class TestConversationStatus:
+    def test_reads_webhook_status(self):
         with patch(
-            "plugins.platforms.chatwoot.labels_tool._api_request",
-            side_effect=self._labels_then_status(payload, "open"),
+            "plugins.platforms.chatwoot.coach_context.webhook_conversation_status",
+            return_value="pending",
         ):
-            out = auto._preserved_labels("1", "42")
-        assert sorted(out) == ["handoff-escalation", "risk-high"]
+            assert auto._conversation_status() == "pending"
 
-    def test_handoff_dropped_when_status_pending(self):
-        payload = {
-            "payload": [
-                "handoff-escalation",
-                "risk-high",
-                "gig-complete",
-            ]
-        }
+    def test_blank_is_none(self):
         with patch(
-            "plugins.platforms.chatwoot.labels_tool._api_request",
-            side_effect=self._labels_then_status(payload, "pending"),
+            "plugins.platforms.chatwoot.coach_context.webhook_conversation_status",
+            return_value="  ",
         ):
-            out = auto._preserved_labels("1", "42")
-        assert out == ["risk-high"]
-        assert "handoff-escalation" not in out
-        assert "gig-complete" not in out
+            assert auto._conversation_status() is None
 
-    def test_gig_complete_never_preserved(self):
-        payload = {"payload": ["gig-complete", "risk-low"]}
+    def test_lookup_failure_is_none(self):
         with patch(
-            "plugins.platforms.chatwoot.labels_tool._api_request",
-            side_effect=self._labels_then_status(payload, "open"),
+            "plugins.platforms.chatwoot.coach_context.webhook_conversation_status",
+            side_effect=RuntimeError("boom"),
         ):
-            out = auto._preserved_labels("1", "42")
-        assert out == ["risk-low"]
+            assert auto._conversation_status() is None
+
+
+class TestLabelContextHook:
+    def test_skips_non_chatwoot(self):
+        assert auto.chatwoot_label_context_hook(platform="telegram") is None
+
+    def test_skips_when_unconfigured(self, monkeypatch):
+        monkeypatch.setattr(auto, "check_chatwoot_labels_requirements", lambda: False)
+        assert auto.chatwoot_label_context_hook(platform="chatwoot") is None
+
+    def test_injects_status_and_skill_pointer(self, monkeypatch):
+        monkeypatch.setattr(auto, "check_chatwoot_labels_requirements", lambda: True)
+        monkeypatch.setattr(auto, "_conversation_status", lambda: "open")
+        out = auto.chatwoot_label_context_hook(platform="chatwoot")
+        assert out is not None
+        assert "status: open" in out["context"]
+        assert "chatwoot-conversation-labels" in out["context"]
+        assert "never replace" in out["context"]
+
+    def test_unknown_status(self, monkeypatch):
+        monkeypatch.setattr(auto, "check_chatwoot_labels_requirements", lambda: True)
+        monkeypatch.setattr(auto, "_conversation_status", lambda: None)
+        out = auto.chatwoot_label_context_hook(platform="chatwoot")
+        assert out is not None
+        assert "status: unknown" in out["context"]

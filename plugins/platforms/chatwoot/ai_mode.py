@@ -20,7 +20,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Same convention as labels_auto._HANDOFF_ACTIVE_STATUS / crwd_handoff.
+# Same convention as coach_context / crwd_handoff.
 _HANDOFF_ACTIVE_STATUS = "open"
 
 

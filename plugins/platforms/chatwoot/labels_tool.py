@@ -178,6 +178,24 @@ def _merge_labels(existing: List[str], new: List[str]) -> List[str]:
     return merged
 
 
+def _apply_add_remove(
+    current: List[str], add: List[str], remove: List[str]
+) -> List[str]:
+    """Return ``(current - remove) ∪ add``. Add wins when a title is in both."""
+    remove_set = {_normalize_label(x) for x in remove if _normalize_label(x)}
+    kept = [t for t in current if _normalize_label(t) not in remove_set]
+    return _merge_labels(kept, add)
+
+
+def _normalize_title_list(raw: Any) -> Tuple[Optional[List[str]], Optional[str]]:
+    """Coerce a tool arg to normalized titles. None → empty list."""
+    if raw is None:
+        return [], None
+    if not isinstance(raw, list):
+        return None, "must be an array of label title strings"
+    return [_normalize_label(x) for x in raw if _normalize_label(str(x))], None
+
+
 # --- Actions ---
 
 
@@ -187,6 +205,18 @@ def _get_all_labels(account_id: str) -> Dict[str, Any]:
         return {"success": False, "labels": [], "error": err, "detail": data}
     titles = _extract_account_label_titles(data)
     return {"success": True, "labels": titles, "payload": data, "error": None}
+
+
+def _get_conversation_labels(account_id: str, conversation_id: str) -> Dict[str, Any]:
+    """Return labels currently applied to one conversation."""
+    ok, data, err = _api_request(
+        "GET",
+        f"/api/v1/accounts/{account_id}/conversations/{conversation_id}/labels",
+    )
+    if not ok:
+        return {"success": False, "labels": [], "error": err, "detail": data}
+    titles = _extract_conversation_labels(data)
+    return {"success": True, "labels": titles, "error": None}
 
 
 def _create_labels_if_not_exists(account_id: str) -> Dict[str, Any]:
@@ -237,16 +267,22 @@ def _create_labels_if_not_exists(account_id: str) -> Dict[str, Any]:
 def _assign_labels(
     account_id: str,
     conversation_id: str,
-    labels: List[str],
-    replace: bool,
+    add: Optional[List[str]] = None,
+    remove: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    normalized = [_normalize_label(x) for x in labels if _normalize_label(x)]
-    # Empty is allowed only for replace=True (clear conversation labels).
-    if not normalized and not replace:
+    """Apply a minimal add/remove diff. Never replaces the full set.
+
+    One GET of current conversation labels, then one POST of
+    ``(current - remove) ∪ add``. Titles not named in either list (human,
+    Chatwoot automation, ``risk-*``, ``unregistered-user``) are left alone.
+    """
+    add_norm = [_normalize_label(x) for x in (add or []) if _normalize_label(x)]
+    remove_norm = [_normalize_label(x) for x in (remove or []) if _normalize_label(x)]
+    if not add_norm and not remove_norm:
         return {
             "success": False,
             "labels": [],
-            "error": "labels must be a non-empty array of label title strings",
+            "error": "add and/or remove must name at least one label title",
         }
 
     bootstrap = _create_labels_if_not_exists(account_id)
@@ -260,22 +296,19 @@ def _assign_labels(
                 "detail": bootstrap,
             }
 
-    if replace:
-        final_labels = normalized
-    else:
-        ok_get, conv_data, err_get = _api_request(
-            "GET",
-            f"/api/v1/accounts/{account_id}/conversations/{conversation_id}/labels",
-        )
-        if not ok_get:
-            return {
-                "success": False,
-                "labels": [],
-                "error": err_get,
-                "detail": conv_data,
-            }
-        current = _extract_conversation_labels(conv_data)
-        final_labels = _merge_labels(current, normalized)
+    ok_get, conv_data, err_get = _api_request(
+        "GET",
+        f"/api/v1/accounts/{account_id}/conversations/{conversation_id}/labels",
+    )
+    if not ok_get:
+        return {
+            "success": False,
+            "labels": [],
+            "error": err_get,
+            "detail": conv_data,
+        }
+    current = _extract_conversation_labels(conv_data)
+    final_labels = _apply_add_remove(current, add_norm, remove_norm)
 
     ok_post, post_data, err_post = _api_request(
         "POST",
@@ -293,8 +326,9 @@ def _assign_labels(
     applied = _extract_conversation_labels(post_data) if post_data else final_labels
     return {
         "success": True,
-        "labels": applied if applied or replace else final_labels,
-        "replaced": replace,
+        "labels": applied or final_labels,
+        "added": add_norm,
+        "removed": remove_norm,
         "error": None,
     }
 
@@ -353,6 +387,20 @@ def chatwoot_labels_tool(args: Dict[str, Any], **_kw: Any) -> str:
         result.update(out)
         return json.dumps(result, ensure_ascii=False)
 
+    if action == "get_conversation_labels":
+        if not account_id or not conversation_id:
+            result.update(
+                {
+                    "success": False,
+                    "reason": "No current Chatwoot conversation; skip label read.",
+                    "error": None,
+                }
+            )
+            return json.dumps(result, ensure_ascii=False)
+        out = _get_conversation_labels(account_id, conversation_id)
+        result.update(out)
+        return json.dumps(result, ensure_ascii=False)
+
     if action == "assign_labels":
         if not account_id or not conversation_id:
             result.update(
@@ -364,18 +412,16 @@ def chatwoot_labels_tool(args: Dict[str, Any], **_kw: Any) -> str:
             )
             return json.dumps(result, ensure_ascii=False)
 
-        raw_labels = args.get("labels")
-        if not isinstance(raw_labels, list):
-            result.update(
-                {
-                    "success": False,
-                    "error": "labels must be an array of label title strings",
-                }
-            )
+        add_list, add_err = _normalize_title_list(args.get("add"))
+        if add_err:
+            result.update({"success": False, "error": f"add {add_err}"})
+            return json.dumps(result, ensure_ascii=False)
+        remove_list, remove_err = _normalize_title_list(args.get("remove"))
+        if remove_err:
+            result.update({"success": False, "error": f"remove {remove_err}"})
             return json.dumps(result, ensure_ascii=False)
 
-        replace = bool(args.get("replace", False))
-        out = _assign_labels(account_id, conversation_id, raw_labels, replace)
+        out = _assign_labels(account_id, conversation_id, add_list, remove_list)
         result.update(out)
         return json.dumps(result, ensure_ascii=False)
 
@@ -383,7 +429,7 @@ def chatwoot_labels_tool(args: Dict[str, Any], **_kw: Any) -> str:
         {
             "success": False,
             "error": (
-                "action must be one of: get_all_labels, "
+                "action must be one of: get_all_labels, get_conversation_labels, "
                 "create_labels_if_not_exists, assign_labels"
             ),
         }
@@ -397,11 +443,11 @@ CHATWOOT_LABELS_SCHEMA = {
     "name": "chatwoot_labels",
     "description": (
         "Manage Chatwoot conversation labels on the current support conversation. "
-        "Actions: get_all_labels (list account labels), create_labels_if_not_exists "
-        "(bootstrap applied predefined labels into the account; unapplied titles are "
-        "not created), assign_labels (apply one or more labels to the current "
-        "conversation; merges by default). Safe to call outside Chatwoot — it "
-        "no-ops gracefully."
+        "Actions: get_all_labels (account catalog), get_conversation_labels "
+        "(titles currently on this conversation), create_labels_if_not_exists "
+        "(bootstrap applied titles into the account), assign_labels (add and/or "
+        "remove titles in one write; never replaces the full set). Safe to call "
+        "outside Chatwoot — it no-ops gracefully."
     ),
     "parameters": {
         "type": "object",
@@ -410,24 +456,26 @@ CHATWOOT_LABELS_SCHEMA = {
                 "type": "string",
                 "enum": [
                     "get_all_labels",
+                    "get_conversation_labels",
                     "create_labels_if_not_exists",
                     "assign_labels",
                 ],
                 "description": "Which label operation to perform.",
             },
-            "labels": {
+            "add": {
                 "type": "array",
                 "items": {"type": "string"},
                 "description": (
-                    "Label title strings to assign (required for assign_labels). "
+                    "For assign_labels: titles to add (merged with current). "
                     f"Applied titles include: {', '.join(sorted(APPLIED_LABEL_TITLES))}."
                 ),
             },
-            "replace": {
-                "type": "boolean",
+            "remove": {
+                "type": "array",
+                "items": {"type": "string"},
                 "description": (
-                    "For assign_labels only. false (default) merges with existing "
-                    "conversation labels; true replaces the full set."
+                    "For assign_labels: titles to remove. Unnamed titles "
+                    "(human, automation, risk-*, unregistered-user) stay."
                 ),
             },
             "account_id": {
