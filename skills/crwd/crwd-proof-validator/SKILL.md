@@ -239,9 +239,11 @@ Read the result:
 
 ### 8a. Gig-complete / proof labels
 
-When `store_proof` returns `is_gig_completed: true`, add `gig-complete` (and
-remove `new-user`) per `chatwoot-conversation-labels` — those titles are
-turn-scoped, so remove them on later turns that did not complete a gig.
+When `store_proof` returns `is_gig_completed: true`, add `gig-complete` and
+remove `new-user` per `chatwoot-conversation-labels`. `gig-complete` is
+turn-scoped — remove it again on any later turn that did not complete a
+gig. `new-user`'s removal here is a one-time, durable state change (the
+member has completed a gig for good) — don't re-add it on a later turn.
 
 Add `proof-acceptance` when every `store_proof` this turn was accepted;
 add `proof-rejection` when any was not. Use `chatwoot_labels`

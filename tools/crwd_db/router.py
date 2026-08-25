@@ -27,6 +27,7 @@ from tools.crwd_db.proofs import (
     _get_user_proofs,
     _mark_proof_risk_scored,
     _store_proof,
+    _user_has_completed_gig,
 )
 from tools.crwd_db.stage import _get_user_gig_status
 from tools.crwd_db.users import _get_user
@@ -121,6 +122,8 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 user_id=args.get("user_id", ""),
                 crwd_id=args.get("crwd_id", "") or args.get("gig_id", ""),
             )
+        if action == "user_has_completed_gig":
+            return _user_has_completed_gig(user_id=args.get("user_id", ""))
         if action == "find_proof":
             return _find_proof(
                 proof_id=args.get("proof_id", ""),
@@ -142,7 +145,8 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
             "get_user_gigs, get_user_gig_history, get_waitlisted_gigs, get_user_gig_status, "
             "get_user_products, get_user_receipts, get_user_notifications, "
             "store_proof, get_user_proofs, check_duplicate_proof, find_proof, "
-            "check_gig_proof_completion, mark_proof_risk_scored, custom_query"
+            "check_gig_proof_completion, user_has_completed_gig, "
+            "mark_proof_risk_scored, custom_query"
         )
     except RuntimeError as exc:
         # Config/connection problems -- safe to surface the short message.

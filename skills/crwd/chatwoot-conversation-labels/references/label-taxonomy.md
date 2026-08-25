@@ -35,11 +35,11 @@ Data-first — not intent. On while the member has **not** completed at least
 one gig (all required proofs accepted). Payment may or may not have been
 received.
 
-**When to add:** `crwd_db` `get_user_gig_history` shows no completed gig
-(skip if the lookup is unknown).
+**When to add:** `crwd_db` `user_has_completed_gig` returns
+`has_completed_gig: false` (skip if the lookup is unknown / `null`).
 
-**When to remove:** a completed gig exists, or this turn's `store_proof`
-returned `is_gig_completed: true`.
+**When to remove:** `user_has_completed_gig` returns `true`, or this turn's
+`store_proof` returned `is_gig_completed: true`.
 
 - First-time member asking anything → add `new-user` when DB confirms no completed gig
 - After a gig completes → remove `new-user`

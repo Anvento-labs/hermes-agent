@@ -407,6 +407,25 @@ def user_has_completed_gig(user_id: str) -> Optional[bool]:
         return None
 
 
+def _user_has_completed_gig(user_id: str) -> str:
+    """Whether this member has ever completed a gig (all required proofs
+    accepted for at least one campaign). True/False are durable; None means
+    the lookup failed (Mongo unavailable) -- caller must not guess.
+    """
+    user_id = (user_id or "").strip()
+    if not user_id:
+        return tool_error("user_id is required for user_has_completed_gig")
+    return json.dumps(
+        {
+            "_type": "crwd_user_has_completed_gig",
+            "user_id": user_id,
+            "has_completed_gig": user_has_completed_gig(user_id),
+            "error": None,
+        },
+        ensure_ascii=False,
+    )
+
+
 def _mark_proof_risk_scored(proof_record_id: str) -> str:
     """Flag a proof as risk-scored so it is never scored twice.
 

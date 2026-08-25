@@ -699,6 +699,78 @@ class TestUserGigHistory:
         assert out["items"][0]["status"] == "Completed"
 
 
+class TestUserHasCompletedGig:
+    """user_has_completed_gig is the durable new-user signal, not membership rows."""
+
+    def test_requires_user_id(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        out = json.loads(t.crwd_db_tool({"action": "user_has_completed_gig"}))
+        assert "error" in out
+        assert "user_id" in out["error"]
+
+    def test_true_when_completed_proof_row_exists(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        proofs = MagicMock()
+        proofs.find_one.return_value = {"_id": "done"}
+        with patch.object(
+            t.connection, "_db", return_value=_fake_db({"proof_submissions": proofs})
+        ):
+            out = json.loads(t.crwd_db_tool({
+                "action": "user_has_completed_gig",
+                "user_id": "u1",
+            }))
+        assert out["_type"] == "crwd_user_has_completed_gig"
+        assert out["has_completed_gig"] is True
+        assert out["error"] is None
+        assert proofs.find_one.call_args[0][0] == {
+            "user_id": "u1",
+            "is_gig_completed": True,
+        }
+
+    def test_false_when_no_completed_proof_and_no_memberships(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        proofs = MagicMock()
+        proofs.find_one.return_value = None
+        members = MagicMock()
+        member_cursor = MagicMock()
+        members.find.return_value = member_cursor
+        member_cursor.limit.return_value = []
+        with patch.object(
+            t.connection,
+            "_db",
+            return_value=_fake_db({
+                "proof_submissions": proofs,
+                "added_crwd_members": members,
+            }),
+        ):
+            out = json.loads(t.crwd_db_tool({
+                "action": "user_has_completed_gig",
+                "user_id": "u1",
+            }))
+        assert out["has_completed_gig"] is False
+        assert out["error"] is None
+
+    def test_null_when_lookup_fails(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        proofs = MagicMock()
+        proofs.find_one.side_effect = RuntimeError("mongo down")
+        with patch.object(
+            t.connection, "_db", return_value=_fake_db({"proof_submissions": proofs})
+        ):
+            out = json.loads(t.crwd_db_tool({
+                "action": "user_has_completed_gig",
+                "user_id": "u1",
+            }))
+        # None means don't guess new-user — not a tool error.
+        assert out["has_completed_gig"] is None
+        assert out["error"] is None
+
+    def test_listed_in_schema(self):
+        assert "user_has_completed_gig" in (
+            t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+        )
+
+
 class TestGigDetailsFull:
     def test_full_mode_returns_rich_payload(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")

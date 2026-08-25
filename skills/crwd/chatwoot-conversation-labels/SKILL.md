@@ -38,7 +38,7 @@ no-ops gracefully there).
 - `chatwoot` toolset. `chatwoot_labels` no-ops off Chatwoot — skip labeling.
 - Conversation status is injected each turn (`[Chatwoot] Conversation status: …`).
   Use it for `handoff-escalation` removal.
-- For `new-user`, you may need `crwd_db` `get_user_gig_history` if this
+- For `new-user`, you may need `crwd_db` `user_has_completed_gig` if this
   conversation has not already established whether the member completed a gig.
 
 ## Quick Reference
@@ -70,11 +70,11 @@ change — keep it.
 **Description:** Member has not yet completed a gig (required proofs accepted).
 
 **When to add:** You don't already know from this conversation whether the
-member has completed a gig — call `crwd_db` `get_user_gig_history` to check,
-and add this label if they have no completed gig. If the lookup fails or is
-unknown, skip (do not guess). Payment status does not matter.
+member has completed a gig — call `crwd_db` `user_has_completed_gig` to check,
+and add this label if `has_completed_gig` is `false`. If the lookup fails or
+is unknown (`null`), skip (do not guess). Payment status does not matter.
 
-**When to remove:** `crwd_db` confirms a completed gig, or this turn's
+**When to remove:** `user_has_completed_gig` returns `true`, or this turn's
 `store_proof` result has `is_gig_completed: true`.
 
 ### proof-acceptance

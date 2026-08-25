@@ -53,7 +53,11 @@ CRWD_DB_SCHEMA = {
         "accepted included) and sets is_gig_completed itself on the proof that leaves "
         "nothing outstanding. check_gig_proof_completion(user_id, crwd_id) reports which "
         "required artifacts are accepted and which are still outstanding — use it to know "
-        "what to coach for, and to decide whether the gig is done. Proof ids are normalized "
+        "what to coach for, and to decide whether the gig is done. "
+        "user_has_completed_gig(user_id) returns whether the member has ever completed a "
+        "gig (proofs accepted) — true/false/null (null = lookup failed, don't guess). "
+        "Use this for new-user status, not get_user_gig_history, whose membership rows "
+        "don't carry proof-completion state. Proof ids are normalized "
         "before comparison, so REC#/Order # prefixes, spacing and hyphens do not matter, "
         "and UGC links key on platform:post_id."
     ),
@@ -70,6 +74,7 @@ CRWD_DB_SCHEMA = {
                     "get_user_receipts", "get_user_notifications",
                     "store_proof", "get_user_proofs", "check_duplicate_proof",
                     "find_proof", "check_gig_proof_completion",
+                    "user_has_completed_gig",
                     "mark_proof_risk_scored", "custom_query",
                 ],
             },
@@ -88,7 +93,8 @@ CRWD_DB_SCHEMA = {
                     "users._id. For list_active_gigs: exclude gigs the member "
                     "already has a membership for. Also used by get_user_gigs, "
                     "get_user_gig_history, get_waitlisted_gigs, get_user_products, get_user_receipts, "
-                    "get_user_notifications, get_user_gig_status. Required by store_proof; "
+                    "get_user_notifications, get_user_gig_status, user_has_completed_gig. "
+                    "Required by store_proof; "
                     "optional on check_duplicate_proof (to tell a self-resubmit from another "
                     "member's proof) and find_proof (to filter)."
                 ),
