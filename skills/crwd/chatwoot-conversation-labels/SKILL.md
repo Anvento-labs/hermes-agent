@@ -19,9 +19,10 @@ filter the inbox. **Never mention labels to the member.**
 You own these eight titles. You add and remove them yourself with
 `chatwoot_labels` every Chatwoot turn. There is no background hook for them.
 
-Do **not** add or remove `risk-*` (owned by `crwd-risk-analyser`) or
-`unregistered-user` (owned by a pre-turn hook). Leave every other label
-untouched — including titles a human or Chatwoot automation applied.
+Do **not** add or remove `risk-*` (owned by `crwd-risk-analyser`, which
+adds the new band and removes the old one) or `unregistered-user` (owned
+by a pre-turn hook). Leave every other label untouched — including titles
+a human or Chatwoot automation applied.
 
 ## When to Use
 
@@ -54,6 +55,9 @@ Dot, refunds, chargebacks, or a payout page/action being broken.
 topic. A short ambiguous reply ("yes", "ok", "thanks") to a payment
 conversation is not a topic change — keep it.
 
+**Examples:** "When will I get paid?"; "Where's my Dot / refund /
+chargeback?"; payout page broken (add `app-help` too).
+
 ### app-help
 
 **Description:** App navigation and broken UI.
@@ -64,6 +68,8 @@ a tab, or a control, or about the app/page not loading or looking broken.
 **When to remove:** The conversation has clearly moved on to a different
 topic. A short ambiguous reply to an app-help conversation is not a topic
 change — keep it.
+
+**Examples:** "Where is the Explore tab?"; "The page won't load".
 
 ### new-user
 
@@ -76,6 +82,9 @@ is unknown (`null`), skip (do not guess). Payment status does not matter.
 
 **When to remove:** `user_has_completed_gig` returns `true`, or this turn's
 `store_proof` result has `is_gig_completed: true`.
+
+**Examples:** first-time member asking anything → add when DB confirms no
+completed gig; after a gig completes → remove.
 
 ### proof-acceptance
 
@@ -115,7 +124,8 @@ keep it after the completing turn.
 **When to add:** You called `crwd_handoff` this turn.
 
 **When to remove:** Conversation status (given to you each turn) is no
-longer `open`. Keep it while status is `open`.
+longer `open` (bot owns again, typically `pending`). Keep it while status
+is `open`.
 
 ### scam
 
@@ -130,8 +140,6 @@ phishing/fraud link. Do **not** add for a benign "is CRWD legit?" question.
 **When to remove:** This turn's message does not repeat the signal — this
 label is turn-scoped, not a persistent flag (the fraud risk score, owned by
 `crwd-risk-analyser`, is the durable record).
-
-Worked examples: `skill_view("chatwoot-conversation-labels", "references/label-taxonomy.md")`.
 
 ## Procedure (every turn)
 

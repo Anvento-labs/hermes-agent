@@ -74,8 +74,7 @@ Labels apply on **Chatwoot** turns only. Other platforms no-op.
 | Auto-classification pipeline     | `plugins/platforms/chatwoot/labels_auto.py`                             |
 | Chatwoot API assign / create     | `plugins/platforms/chatwoot/labels_tool.py`                             |
 | Hook registration                | `plugins/platforms/chatwoot/adapter.py`                                 |
-| Agent guidance (skill)           | `skills/crwd/chatwoot-conversation-labels/`                             |
-| Taxonomy examples                | `skills/crwd/chatwoot-conversation-labels/references/label-taxonomy.md` |
+| Agent guidance (skill)           | `skills/crwd/chatwoot-conversation-labels/SKILL.md`                     |
 | Unit tests                       | `tests/plugins/test_chatwoot_labels_auto.py`                            |
 
 Titles are **lowercase**. Chatwoot normalizes label titles to lowercase.
@@ -803,8 +802,7 @@ when no matching Chatwoot label is assigned.
 
 ## 21. Related skills and tests
 
-- Skill: `skills/crwd/chatwoot-conversation-labels/SKILL.md`
-- Examples: `skills/crwd/chatwoot-conversation-labels/references/label-taxonomy.md`
+- Skill (sole label rule engine): `skills/crwd/chatwoot-conversation-labels/SKILL.md`
 - Proof / risk owners: `skills/crwd/crwd-proof-validator/`, `skills/crwd/crwd-risk-analyser/`
 - Tests: `scripts/run_tests.sh tests/plugins/test_chatwoot_labels_auto.py`
 
