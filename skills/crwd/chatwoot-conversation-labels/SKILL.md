@@ -46,17 +46,21 @@ no-ops gracefully there).
 
 ### payment-issue
 
-**Description:** Any payment-related question or message.
+**Description:** A genuine payment problem, not a routine payment question.
 
-**When to add:** The member's current message is about pay, payout timing,
-Dot, refunds, chargebacks, or a payout page/action being broken.
+**When to add:** The member reports a real problem — payout late/missing,
+wrong amount, a failed/reversed payment, a refund/chargeback dispute, or
+the payout page/action is broken.
 
 **When to remove:** The conversation has clearly moved on to a different
 topic. A short ambiguous reply ("yes", "ok", "thanks") to a payment
 conversation is not a topic change — keep it.
 
-**Examples:** "When will I get paid?"; "Where's my Dot / refund /
-chargeback?"; payout page broken (add `app-help` too).
+**Examples:** Add for "My payout never arrived"; "I was charged the wrong
+amount"; "I'm disputing this chargeback"; payout page broken (add
+`app-help` too). Do **not** add for routine questions with no reported
+problem ("When will I get paid?"; "How does Dot work?"; "What's the
+payout schedule?").
 
 ### app-help
 
@@ -165,7 +169,7 @@ label is turn-scoped, not a persistent flag (the fraud risk score, owned by
 - All proofs accepted this turn → `add=["proof-acceptance"]`
   (+ `gig-complete` when `is_gig_completed` this turn;
   `remove=["new-user"]` when the gig completed)
-- Last turn was a scam ask, this turn is "when do I get paid?" →
+- Last turn was a scam ask, this turn reports the payout never arrived →
   `add=["payment-issue"]`, `remove=["scam"]`
 
 ## Common Pitfalls
@@ -181,3 +185,5 @@ label is turn-scoped, not a persistent flag (the fraud risk score, owned by
 5. **Leaving `scam` on after the signal turn** — it is turn-scoped.
 6. **Adding or removing `risk-*` from this skill** — `crwd-risk-analyser`
    owns those.
+7. **Adding `payment-issue` for a routine payment question** with no reported
+   problem (timing, how Dot/payouts work) — these get no label.

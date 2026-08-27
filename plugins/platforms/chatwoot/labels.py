@@ -26,7 +26,7 @@ APPLIED_LABELS: List[Dict[str, Any]] = [
     },
     {
         "title": "payment-issue",
-        "description": "Any payment-related question or message",
+        "description": "Payment problem: late/missing payout, wrong amount, failed payment, or refund/chargeback dispute",
         "color": "#ffc53d",
     },
     {
