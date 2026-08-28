@@ -32,7 +32,8 @@ COLL_GIG_STORE_ORDERS = "gig_store_orders"
 COLL_GIG_PRODUCT_REVIEWS = "gig_product_reviews"
 COLL_ORDER_RECEIPT_REVIEWS = "order_receipt_reviews"
 COLL_GIG_PARTICIPATIONS = "gig_participations"
-# Agent-owned. The only collection this package ever writes to.
+# Writes: proof_submissions (store_proof), users (_create_user, leads only),
+# added_crwd_members (_add_user_gig_interest, leads + crwd_db action).
 COLL_PROOFS = "proof_submissions"
 OBJECT_ID_IN_TEXT_RE = re.compile(r"\b[0-9a-fA-F]{24}\b")
 # custom_query is find/count only, so listing a collection here grants read access
@@ -67,6 +68,7 @@ GIG_FIELDS = {
 }
 MEMBER_FIELDS = {
     "member": 1, "user_id": 1, "worker_id": 1, "crwd_id": 1, "status": 1,
+    "business_owner_id": 1, "isInterested": 1,
     "isAccepted": 1, "isApproved": 1, "isCompleted": 1, "hasPaid": 1,
     "isDeleted": 1, "createdAt": 1, "updatedAt": 1,
 }

@@ -48,6 +48,7 @@ from gateway.platforms.base import (
     is_network_accessible,
 )
 from gateway.platforms.helpers import strip_markdown
+from plugins.platforms.chatwoot.leads import DEFAULT_LEADS_PATH
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +189,9 @@ def _env_enablement() -> Optional[dict]:
     account_id = os.getenv("CHATWOOT_ACCOUNT_ID", "").strip()
     if account_id:
         seed["account_id"] = account_id
+    inbox_id = os.getenv("CHATWOOT_INBOX_ID", "").strip()
+    if inbox_id:
+        seed["inbox_id"] = inbox_id
     secret = os.getenv("CHATWOOT_WEBHOOK_SECRET", "").strip()
     if secret:
         seed["webhook_secret"] = secret
@@ -335,16 +339,18 @@ class ChatwootAdapter(BasePlatformAdapter):
         app = web.Application(client_max_size=self._max_body_bytes + 1024)
         app.router.add_get(self._health_path, self._handle_health)
         app.router.add_post(self._webhook_path, self._handle_webhook)
+        app.router.add_post(DEFAULT_LEADS_PATH, self._handle_leads)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         site = web.TCPSite(self._runner, self._host, self._port)
         await site.start()
         self._mark_connected()
         logger.info(
-            "[chatwoot] Listening on %s:%d%s (token %s, agent-token %s, trace=%s)",
+            "[chatwoot] Listening on %s:%d%s + %s (token %s, agent-token %s, trace=%s)",
             self._host,
             self._port,
             self._webhook_path,
+            DEFAULT_LEADS_PATH,
             _redact(self._token),
             _redact(self._agent_token) if self._agent_token else "<unset>",
             self._private_note_trace,
@@ -376,6 +382,30 @@ class ChatwootAdapter(BasePlatformAdapter):
             return True
         provided = request.query.get("token", "")
         return hmac.compare_digest(provided, self._webhook_secret)
+
+    async def _handle_leads(self, request: "web.Request") -> "web.Response":
+        """``POST /leads`` — CRWD lead ingest (same ``?token=`` as webhook)."""
+        if not self._running:
+            return web.Response(status=404)
+        if request.content_length is not None and request.content_length > self._max_body_bytes:
+            return web.Response(status=413)
+        if not self._secret_ok(request):
+            return web.Response(status=403)
+        from plugins.platforms.chatwoot import leads as leads_mod
+        from plugins.platforms.chatwoot.lead_turn import schedule_coach_turn
+
+        resp = await leads_mod.handle_post(request, max_body_bytes=self._max_body_bytes)
+        if resp.status != 200:
+            return resp
+        try:
+            body = json.loads(resp.body)
+        except Exception:
+            return resp
+        if not isinstance(body, dict) or not body.get("accepted"):
+            return resp
+        started = schedule_coach_turn(self, body)
+        body["coach_turn_started"] = started
+        return web.json_response(body)
 
     async def _handle_webhook(self, request: "web.Request") -> "web.Response":
         """Receive a Chatwoot webhook POST, ack fast, dispatch async.

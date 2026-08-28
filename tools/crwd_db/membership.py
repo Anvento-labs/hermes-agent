@@ -247,3 +247,90 @@ def _sort_members_by_gig_end_date(
         members,
         key=lambda m: _end_date_sort_key(gigs_by_id.get(str(m.get("crwd_id")))),
     )
+
+
+def _membership_payload(doc: Optional[Dict[str, Any]], *, created: bool) -> str:
+    return json.dumps(
+        {
+            "_type": "user_gig_interest",
+            "created": created,
+            "items": [_serialize_doc(doc)] if doc else [],
+            "error": None,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _add_user_gig_interest(
+    user_id: str = "",
+    crwd_id: str = "",
+    gig_id: str = "",
+    business_owner_id: str = "",
+) -> str:
+    """Record pending gig interest (not enrollment). Lead ingest + Coach action."""
+    user_id = (user_id or "").strip()
+    crwd_id = (crwd_id or gig_id or "").strip()
+    owner_raw = (business_owner_id or "").strip()
+    user_oid = _oid(user_id)
+    gig_oid = _oid(crwd_id)
+    if user_oid is None or gig_oid is None:
+        return tool_error("user_id and crwd_id must be valid ObjectIds")
+
+    db = _conn._db()
+    gig = db[_COLL_CRWDS].find_one(
+        {
+            "_id": gig_oid,
+            "isDeleted": {"$ne": True},
+            "isArchived": {"$ne": True},
+        },
+        {"business_owner_id": 1},
+        max_time_ms=_MAX_TIME_MS,
+    )
+    if not gig:
+        return tool_error("unknown gig")
+
+    owner_oid = _oid(owner_raw)
+    if owner_oid is None:
+        owner_oid = gig.get("business_owner_id")
+
+    members = db[_COLL_MEMBERS]
+    existing = members.find_one(
+        {
+            "crwd_id": gig_oid,
+            "member": {"$in": _id_values(user_id)},
+            "isDeleted": {"$ne": True},
+        },
+        _MEMBER_FIELDS,
+        max_time_ms=_MAX_TIME_MS,
+    )
+    if existing:
+        return _membership_payload(existing, created=False)
+
+    now = _conn._now()
+    doc: Dict[str, Any] = {
+        "crwd_id": gig_oid,
+        "member": user_oid,
+        "business_owner_id": owner_oid,
+        "status": "Interested",
+        "isInterested": True,
+        "isDeleted": False,
+        "isAccepted": False,
+        "isArrived": False,
+        "isCompleted": False,
+        "hasPaid": False,
+        "isApproved": False,
+        "proof_of_document": "",
+        "store_requests": [],
+        "product_requests": [],
+        "initial_product_ids": [],
+        "date": now,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    result = members.insert_one(doc)
+    created = members.find_one(
+        {"_id": result.inserted_id}, _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS
+    )
+    if created is None:
+        created = {"_id": result.inserted_id, "crwd_id": gig_oid, "member": user_oid}
+    return _membership_payload(created, created=True)

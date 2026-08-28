@@ -30,6 +30,10 @@ optional_env:
     description: "Default Chatwoot account id (otherwise derived from each webhook payload)"
     prompt: "Default account id (optional)"
     password: false
+  - name: CHATWOOT_INBOX_ID
+    description: "Preferred API-channel inbox id for lead conversations (required when the account has more than one API inbox)"
+    prompt: "Preferred API inbox id (optional)"
+    password: false
   - name: CHATWOOT_WEBHOOK_SECRET
     description: "Shared secret validated as ?token= on the inbound webhook URL"
     prompt: "Webhook shared secret (optional)"

@@ -2072,3 +2072,181 @@ class TestArchivedGigsAreInvisible:
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_gigs", "user_id": "user-a"}))
         assert out["items"] == []
+
+
+class TestCreateUser:
+    def test_not_an_llm_action(self):
+        assert "create_user" not in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+
+    def test_refuses_empty_identity(self):
+        out = json.loads(t._create_user())
+        assert "email or phone" in out["error"]
+
+    def test_reuses_email_hit_without_overwrite(self):
+        users = MagicMock()
+        users.find_one.return_value = {
+            "_id": "u1",
+            "email": "a@b.c",
+            "full_name": "Old Name",
+        }
+        roles = MagicMock()
+        db = _fake_db({"users": users, "roles": roles})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(email="A@B.C", full_name="New Name"))
+        assert out["created"] is False
+        assert out["items"][0]["full_name"] == "Old Name"
+        assert "password" not in out["items"][0]
+        assert users.insert_one.called is False
+        assert users.update_one.called is False
+        roles.find_one.assert_not_called()
+
+    def test_phone_fallback_after_email_miss(self):
+        users = MagicMock()
+        users.find_one.side_effect = [
+            None,
+            {"_id": "u2", "phone": "+15550001111", "email": ""},
+        ]
+        db = _fake_db({"users": users, "roles": MagicMock()})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(email="new@x.com", phone="+15550001111"))
+        assert out["created"] is False
+        assert users.find_one.call_count == 2
+        assert users.insert_one.called is False
+
+    def test_inserts_on_miss(self):
+        oid = t._oid("69b8614f1083b9302fd0a9a7")
+        users = MagicMock()
+        users.find_one.side_effect = [
+            None,
+            None,
+            {"_id": oid, "email": "n@x.com", "phone": "+15550001111", "full_name": "N X"},
+        ]
+        users.insert_one.return_value.inserted_id = oid
+        roles = MagicMock()
+        roles.find_one.return_value = {"_id": "role-user"}
+        db = _fake_db({"users": users, "roles": roles})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(
+                email="n@x.com", phone="+15550001111",
+                first_name="N", last_name="X", full_name="N X",
+            ))
+        assert out["created"] is True
+        doc = users.insert_one.call_args[0][0]
+        assert doc["email"] == "n@x.com"
+        assert doc["phone"] == "+15550001111"
+        assert doc["role"] == "role-user"
+        assert doc["status"] == "Active"
+        assert doc["password"] == ""
+        assert doc["isEmailVerified"] is True
+        assert doc["blacklistToken"] == []
+        assert doc["isDeleted"] is False
+        assert doc["isBlocked"] is False
+        assert "password" not in out["items"][0]
+        roles.find_one.assert_called_once()
+
+    def test_errors_when_member_role_missing(self):
+        users = MagicMock()
+        users.find_one.return_value = None
+        roles = MagicMock()
+        roles.find_one.return_value = None
+        db = _fake_db({"users": users, "roles": roles})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(email="n@x.com"))
+        assert "role" in out["error"]
+        assert users.insert_one.called is False
+
+
+class TestAddUserGigInterest:
+    _USER = "aaaaaaaaaaaaaaaaaaaaaaaa"
+    _GIG = "69b8614f1083b9302fd0a9a7"
+    _OWNER = "69a6f191cb29b0b371b3a14f"
+
+    def test_in_schema_enum(self):
+        assert "add_user_gig_interest" in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+        assert "create_user" not in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+
+    def test_refuses_bad_ids(self):
+        out = json.loads(t._add_user_gig_interest(user_id="x", crwd_id="y"))
+        assert "ObjectId" in out["error"]
+
+    def test_unknown_gig(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        crwds = MagicMock()
+        crwds.find_one.return_value = None
+        members = MagicMock()
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._add_user_gig_interest(
+                user_id=self._USER, crwd_id=self._GIG, business_owner_id=self._OWNER,
+            ))
+        assert "unknown gig" in out["error"]
+        assert members.insert_one.called is False
+
+    def test_reuses_existing_row(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        crwds = MagicMock()
+        crwds.find_one.return_value = {"_id": t._oid(self._GIG), "business_owner_id": t._oid(self._OWNER)}
+        members = MagicMock()
+        members.find_one.return_value = {
+            "_id": "mem1",
+            "status": "Active",
+            "isAccepted": True,
+            "isInterested": False,
+        }
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._add_user_gig_interest(
+                user_id=self._USER, crwd_id=self._GIG, business_owner_id=self._OWNER,
+            ))
+        assert out["created"] is False
+        assert out["items"][0]["isAccepted"] is True
+        assert members.insert_one.called is False
+
+    def test_inserts_interested_row(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        gig_oid = t._oid(self._GIG)
+        owner_oid = t._oid(self._OWNER)
+        mem_oid = t._oid("bbbbbbbbbbbbbbbbbbbbbbbb")
+        crwds = MagicMock()
+        crwds.find_one.return_value = {"_id": gig_oid, "business_owner_id": owner_oid}
+        members = MagicMock()
+        members.find_one.side_effect = [
+            None,
+            {
+                "_id": mem_oid,
+                "crwd_id": gig_oid,
+                "status": "Interested",
+                "isInterested": True,
+                "isAccepted": False,
+                "business_owner_id": owner_oid,
+            },
+        ]
+        members.insert_one.return_value.inserted_id = mem_oid
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "add_user_gig_interest",
+                "user_id": self._USER,
+                "gig_id": self._GIG,
+                "business_owner_id": self._OWNER,
+            }))
+        assert out["created"] is True
+        doc = members.insert_one.call_args[0][0]
+        assert doc["status"] == "Interested"
+        assert doc["isInterested"] is True
+        assert doc["isAccepted"] is False
+        assert doc["business_owner_id"] == owner_oid
+        assert doc["crwd_id"] == gig_oid
+
+    def test_falls_back_to_gig_owner(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        owner_oid = t._oid(self._OWNER)
+        crwds = MagicMock()
+        crwds.find_one.return_value = {"business_owner_id": owner_oid}
+        members = MagicMock()
+        members.find_one.side_effect = [None, {"_id": "m"}]
+        members.insert_one.return_value.inserted_id = "m"
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            t._add_user_gig_interest(user_id=self._USER, crwd_id=self._GIG)
+        assert members.insert_one.call_args[0][0]["business_owner_id"] == owner_oid

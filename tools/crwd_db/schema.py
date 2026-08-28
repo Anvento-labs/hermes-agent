@@ -8,7 +8,7 @@ CRWD_DB_SCHEMA = {
         "Query CRWD's MongoDB data: gigs/campaigns, users, campaign "
         "membership, a member's accepted products (buy links), their receipt/"
         "proof upload status, and their account notifications. Read-only apart "
-        "from the proof-submission actions below. "
+        "from the proof-submission actions and add_user_gig_interest below. "
         "list_active_gigs = active joinable gigs the member has NOT joined "
         "(excludes spots-full campaigns where accepted members >= number_of_people, "
         "matching Explore); get_user_gigs / "
@@ -27,8 +27,9 @@ CRWD_DB_SCHEMA = {
         "requires_ugc_post, ...) — these flags are the gig's proof spec; use them, not "
         "type_of_work_proof, which is unset on almost every gig. "
         "get_user_gig_history returns past membership rows including rejected/completed gigs. "
-        "get_waitlisted_gigs returns gigs the member applied for but is not "
-        "yet accepted into (isAccepted false / pending acceptance). "
+        "add_user_gig_interest records pending interest on a gig "
+        "(status Interested, isInterested true, isAccepted false) — it does not "
+        "enroll the member or count toward capacity. "
         "get_user_gig_status returns per-gig stage and personalized next_step "
         "from membership + proof progress. Always relay next_step verbatim or "
         "closely paraphrased — never compose your own enrollment/acceptance/"
@@ -70,7 +71,7 @@ CRWD_DB_SCHEMA = {
                     "get_user_receipts", "get_user_notifications",
                     "store_proof", "get_user_proofs", "check_duplicate_proof",
                     "find_proof", "check_gig_proof_completion",
-                    "mark_proof_risk_scored", "custom_query",
+                    "mark_proof_risk_scored", "add_user_gig_interest", "custom_query",
                 ],
             },
             "limit": {"type": "integer", "description": "max rows per page (capped at 20; list_active_gigs default 5; get_user_gig_status default 20)"},
@@ -88,7 +89,8 @@ CRWD_DB_SCHEMA = {
                     "users._id. For list_active_gigs: exclude gigs the member "
                     "already has a membership for. Also used by get_user_gigs, "
                     "get_user_gig_history, get_waitlisted_gigs, get_user_products, get_user_receipts, "
-                    "get_user_notifications, get_user_gig_status. Required by store_proof; "
+                    "get_user_notifications, get_user_gig_status, add_user_gig_interest. "
+                    "Required by store_proof; "
                     "optional on check_duplicate_proof (to tell a self-resubmit from another "
                     "member's proof) and find_proof (to filter)."
                 ),
@@ -103,7 +105,14 @@ CRWD_DB_SCHEMA = {
             },
             "gig_id": {
                 "type": "string",
-                "description": "Alias of crwd_id for get_user_products",
+                "description": "Alias of crwd_id for get_user_products and add_user_gig_interest",
+            },
+            "business_owner_id": {
+                "type": "string",
+                "description": (
+                    "Gig owner users._id (add_user_gig_interest). If omitted, "
+                    "copied from crwd.business_owner_id."
+                ),
             },
             "gig_name": {
                 "type": "string",
