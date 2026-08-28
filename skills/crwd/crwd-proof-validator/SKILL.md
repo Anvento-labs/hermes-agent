@@ -235,7 +235,10 @@ Read the result:
   verdict, don't penalize, don't store again.
 - `is_gig_completed: true` → this proof was the last one outstanding; the gig's
   proof is now complete. **The tool decides this, not you** — it's a fact about
-  what's on file. Every earlier proof stays `false`.
+  what's on file. Every earlier proof stays `false`. That same call also flips
+  `isApproved` on the member's membership row — a silent backend side effect that
+  never appears in this payload and never belongs in the reply. Nothing about the
+  rules below changes because of it.
 
 ### 8a. Gig-complete label (automatic)
 

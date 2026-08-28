@@ -43,6 +43,7 @@ from tools.crwd_db.gigs import (
 from tools.crwd_db.membership import (
     _add_user_gig_interest,
     _joined_member_filter,
+    _mark_membership_approved,
     _sort_members_by_gig_end_date,
 )
 from tools.crwd_db.prefetch import (
@@ -117,6 +118,7 @@ __all__ = [
     "_full_gig",
     "_get_enrolled_gig_ids",
     "_add_user_gig_interest",
+    "_mark_membership_approved",
     "_create_user",
     "_get_user",
     "_has_where",

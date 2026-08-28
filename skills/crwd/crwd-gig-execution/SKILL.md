@@ -16,8 +16,10 @@ metadata:
 
 # CRWD Gig Execution
 
-Get the member from "accepted" to "proof submitted" — buying, content, and proof, in one
-skill (proof is just the tail of doing the gig).
+Get the member to "proof submitted" — buying, content, and proof, in one skill (proof is
+just the tail of doing the gig). **Acceptance is not a prerequisite for any of it:** a
+member who has been marked interested but not yet accepted buys and submits proof on the
+same path as an accepted one, so never tell anyone to wait for acceptance first.
 
 ## When to Use
 
@@ -32,10 +34,14 @@ skill (proof is just the tail of doing the gig).
    `[CRWD member]` context line. Use each gig's `next_step` as the primary answer when
    the member asks about gigs they are in — relay it verbatim or closely paraphrased.
    **Never compose your own sentence about enrollment, acceptance, approval, or
-   buy-link status** from the raw fields, and never read `isApproved` off `membership`
-   (legacy, unused end-to-end — full stage table + terminology:
-   `skill_view("crwd-reference", "references/gig-stages.md")`). **"Accepted" = let into
-   the gig; "approved" = proof validated and cleared for payout** — never swap them.
+   buy-link status** from the raw fields — that includes `isApproved`, which
+   `store_proof` now writes once every required proof is in, and which therefore
+   reads `true` on plenty of rows where `isAccepted` is still `false`. That
+   combination is **not** acceptance: answer "am I accepted?" from `isAccepted`
+   alone, and never tell a member their membership was approved. **"Accepted" = let
+   into the gig; "approved" = proof validated and cleared for payout** — never swap
+   them. Full stage table + terminology:
+   `skill_view("crwd-reference", "references/gig-stages.md")`.
    Re-call with `gig_name` or `crwd_id` when they name a specific gig.
 1. **Confirm the gig and its type** (live `irl` vs online) with `crwd_db` `get_gig_details`.
    The type tells you where they shop, not what to submit — the store `requirements` flags do
@@ -97,8 +103,13 @@ skill (proof is just the tail of doing the gig).
 
 ## Pitfalls
 
-- Payout is **not** reimbursement — the member keeps what they bought (see
-  `references/payments-dot.md`). Don't imply they'll be refunded for the purchase.
+- **Check `effective_product_funds` before you send anyone shopping.** Most gigs have
+  none: the member pays for the product themselves, keeps it, and the payout is a fee,
+  **not** a reimbursement — don't imply they'll be refunded. But when a gig *does* carry
+  product funds, CRWD gives them money to buy it with, and telling them they're on their
+  own for the cost is wrong and may stop them doing the gig. Read the field, then frame
+  it — and when it's null, say nothing about product funds at all (see
+  `references/payments-dot.md`).
 - Don't paraphrase a buy link or requirement — quote the real product URL and the exact
   requirement from the gig data.
 - **Never mention "the link" without providing it.** Telling the member to *"order

@@ -26,10 +26,9 @@ from tools.crwd_db.connection import (
 
 from tools.crwd_db.gigs import _normalize, _score
 from tools.crwd_db.membership import (
+    _all_member_filter,
     _gig_type_key,
-    _joined_member_filter,
     _sort_members_by_gig_end_date,
-    _waitlisted_member_filter,
 )
 from tools.crwd_db.proofs import _RECEIPT_TYPES, _gig_proof_completion
 from tools.crwd_db.serialize import _serialize_doc
@@ -125,6 +124,7 @@ def _chat_proof_progress(chat_proofs: List[Dict[str, Any]]) -> Dict[str, Any]:
 def _payout_stage(
     *,
     gig_name: str,
+    is_accepted: Any,
     has_paid: Any,
     progress: Dict[str, Any],
     buy_link: Optional[str],
@@ -140,12 +140,26 @@ def _payout_stage(
             "buy_link": buy_link,
             "handoff_recommended": False,
         }
+    # Same sentence either way, on purpose. The member's situation is identical --
+    # every proof in, approved, money pending -- and that CRWD hasn't stamped
+    # acceptance yet is internal. Telling someone who already bought the product
+    # and sent proof that they were never accepted reads as a problem, invites a
+    # question no skill can answer, and contradicts what lead intro told them.
+    next_step = (
+        f"All proof for {gig_name} is approved — payout typically lands in "
+        "1–2 business days via Dot."
+    )
+    if is_accepted is False:
+        return {
+            "stage": "proof_complete_pending_acceptance",
+            "next_step": next_step,
+            "progress": progress,
+            "buy_link": buy_link,
+            "handoff_recommended": False,
+        }
     return {
         "stage": "awaiting_payout",
-        "next_step": (
-            f"All proof for {gig_name} is approved — payout typically lands in "
-            "1–2 business days via Dot."
-        ),
+        "next_step": next_step,
         "progress": progress,
         "buy_link": buy_link,
         "handoff_recommended": False,
@@ -204,18 +218,9 @@ def compute_gig_stage(
             "handoff_recommended": True,
         }
 
-    if is_accepted is False:
-        return {
-            "stage": "request_pending_acceptance",
-            "next_step": (
-                f"Your application for {gig_name} is pending acceptance — we'll "
-                "notify you once you're accepted into the gig."
-            ),
-            "progress": progress,
-            "buy_link": buy_link,
-            "handoff_recommended": False,
-        }
-
+    # No acceptance gate. isAccepted only decides the terminal stage below (and
+    # capacity/app-tab bucketing elsewhere) -- a member marked Interested buys and
+    # submits proof on the same path as an accepted one.
     if not purchases:
         link_hint = f" Use your buy link: {buy_link}." if buy_link else ""
         return {
@@ -242,7 +247,8 @@ def compute_gig_stage(
         progress["review_submitted"] = True
         progress["review_accepted"] = True
         return _payout_stage(
-            gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
+            gig_name=gig_name, is_accepted=is_accepted, has_paid=has_paid,
+            progress=progress, buy_link=buy_link,
         )
 
     if not chat["receipt_accepted"]:
@@ -293,7 +299,8 @@ def compute_gig_stage(
             progress["review_submitted"] = True
             progress["review_accepted"] = True
             return _payout_stage(
-                gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
+                gig_name=gig_name, is_accepted=is_accepted, has_paid=has_paid,
+                progress=progress, buy_link=buy_link,
             )
         needs_review_artifact = any(f in _REVIEW_REQUIREMENT_FLAGS for f in outstanding)
         if needs_review_artifact:
@@ -352,7 +359,8 @@ def compute_gig_stage(
     # No completion payload (unit tests / undetermined requirements): type heuristics.
     if chat["review_accepted"]:
         return _payout_stage(
-            gig_name=gig_name, has_paid=has_paid, progress=progress, buy_link=buy_link,
+            gig_name=gig_name, is_accepted=is_accepted, has_paid=has_paid,
+            progress=progress, buy_link=buy_link,
         )
     if chat["review_needs_human"]:
         return {
@@ -476,7 +484,7 @@ def build_user_gig_status(
     *,
     crwd_id: str = "",
     gig_name: str = "",
-    include_waitlisted: bool = False,
+    include_waitlisted: bool = False,  # inert; kept so existing callers don't break
     limit: int = _HARD_LIMIT,
 ) -> Dict[str, Any]:
     """Build gig status payload (dict) for one member — used by tool + prefetch hook."""
@@ -487,19 +495,13 @@ def build_user_gig_status(
     row_limit = max(1, min(int(limit or _HARD_LIMIT), _HARD_LIMIT))
     db = _conn._db()
 
-    member_filter = _joined_member_filter(user_id)
+    # Every non-deleted row, accepted or not -- acceptance no longer gates
+    # progression, so compute_gig_stage decides how to coach each one.
+    # include_waitlisted is inert now: what it used to union in is already here.
     members = list(
         db[_COLL_MEMBERS]
-        .find(member_filter, _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
+        .find(_all_member_filter(user_id), _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
     )
-
-    waitlisted: List[Dict[str, Any]] = []
-    if include_waitlisted:
-        waitlisted = list(
-            db[_COLL_MEMBERS]
-            .find(_waitlisted_member_filter(user_id), _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS)
-        )
-        members = members + waitlisted
 
     crwd_ids = [m["crwd_id"] for m in members if m.get("crwd_id") is not None]
     gigs_by_id: Dict[str, Dict[str, Any]] = {}

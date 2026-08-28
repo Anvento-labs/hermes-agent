@@ -225,3 +225,31 @@ class TestDotPost:
             data, err = t._dot_post("/users", {"email": "a@b.com"})
         assert data is None
         assert "400" in err and "already exists" in err
+
+
+class TestPaymentTypeGuidance:
+    """CRWD sends money for two reasons and Dot has no field saying which.
+
+    Both traps below produce a confident wrong answer about someone's money, so
+    the warnings live in the tool description where no skill can drop them.
+    """
+
+    def test_names_both_payment_types(self):
+        desc = t.DOT_SCHEMA["description"].lower()
+        assert "product funds" in desc
+        assert "payout" in desc
+
+    def test_warns_type_field_cannot_classify(self):
+        # A transfer's type reads "payout" for BOTH kinds -- it means "money out",
+        # not "the gig fee". Classifying on it mislabels product funds as wages.
+        desc = t.DOT_SCHEMA["description"].lower()
+        assert "type" in desc and "both kinds" in desc
+
+    def test_warns_amounts_are_cents(self):
+        # CRWD stores dollars; comparing 40 to 4000 silently matches nothing.
+        assert "cents" in t.DOT_SCHEMA["description"].lower()
+
+    def test_requires_handoff_over_guessing(self):
+        desc = t.DOT_SCHEMA["description"].lower()
+        assert "never guess" in desc
+        assert "hand off" in desc

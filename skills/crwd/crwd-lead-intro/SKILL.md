@@ -38,8 +38,8 @@ reply.
 1. Load the gig: `get_gig_details` (or equivalent) with facts `gig_id`. Quote
    only fields the tool returned (name, payout, dates, next step). If the gig is
    unknown, say you cannot find that gig — do not invent it.
-2. Load the member: `get_user_gig_status` with `user_id` (include waitlisted if
-   pending interest matters). Treat `user_created: true` as a new CRWD account
+2. Load the member: `get_user_gig_status` with `user_id` — the brand-new interest
+   row is included by default. Treat `user_created: true` as a new CRWD account
    just created for this lead; `user_created: false` as an **existing** member.
 3. Write one Coach-voiced reply:
    - **Existing member** (`user_created` false): do not "welcome them to CRWD"

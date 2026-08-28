@@ -23,7 +23,7 @@ from tools.crwd_db.connection import (
     _oid,
 )
 
-from tools.crwd_db.membership import _member_or_filter
+from tools.crwd_db.membership import _mark_membership_approved, _member_or_filter
 from tools.crwd_db.serialize import _serialize_doc, _serialize_docs
 from tools.crwd_urls import attach_gig_url
 
@@ -611,6 +611,12 @@ def _store_proof(
             },
             ensure_ascii=False, default=str,
         )
+    if doc["is_gig_completed"]:
+        # Surfaces the member in CRWD's own "approved" bucket now that every
+        # required artifact is in. Deliberately absent from the payload below:
+        # the proof reply must never carry a membership-status claim, and a
+        # field named for one is an invitation to narrate it.
+        _mark_membership_approved(user_id, crwd_id)
     return json.dumps(
         {
             "_type": "crwd_proof_stored", "stored": True, "duplicate": False,

@@ -127,7 +127,10 @@ Open via the **profile picture** in the header.
    (pass it straight through), and reflect their real active / completed gigs so it matches
    what they see on My Gigs. For **waitlisted / pending approval** gigs, use `get_waitlisted_gigs`
    instead — those are applied-but-not-yet-accepted (`isAccepted: false`) and appear under
-   **Active** with a **Pending Approval** badge.
+   **Active** with a **Pending Approval** badge. That badge is about CRWD's acceptance
+   decision only — it does **not** mean the member has to wait to buy or submit proof. If
+   they ask what to actually do about such a gig, that's `crwd-gig-discovery` /
+   `crwd-gig-execution` (`get_user_gig_status`'s `next_step`), not a "just wait" answer.
 3. **"How do I open a gig?"** — tap it in Explore (or Continue Work / View Details on their
    cards), or, if you're naming a specific gig from `crwd_db` data, paste linked `name` /
    `gig_name` verbatim (`[Title](…/explore/<_id>)`) so the title is clickable — do not also

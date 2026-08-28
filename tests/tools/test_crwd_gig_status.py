@@ -39,11 +39,58 @@ def _stage(membership=None, gig=None, purchases=None, chat_proofs=None,
 
 
 class TestComputeGigStage:
-    def test_request_pending_acceptance(self):
+    def test_not_yet_accepted_still_progresses(self):
         out = _stage(membership=_membership(isAccepted=False))
-        assert out["stage"] == "request_pending_acceptance"
-        assert "pending acceptance" in out["next_step"].lower()
-        assert "waitlist" not in out["next_step"].lower()
+        assert out["stage"] == "need_purchase"
+
+    def test_not_yet_accepted_reaches_need_receipt(self):
+        out = _stage(
+            membership=_membership(isAccepted=False),
+            purchases=[{"product_url": "http://u"}],
+            chat_proofs=[],
+        )
+        assert out["stage"] == "need_receipt"
+
+    def test_not_yet_accepted_reaches_need_review(self):
+        out = _stage(
+            membership=_membership(isAccepted=False),
+            purchases=[{}],
+            chat_proofs=[{"proof_type": "receipt_amazon", "status": "accepted"}],
+        )
+        assert out["stage"] == "need_review"
+
+    def test_not_yet_accepted_receipt_rejected_still_hands_off(self):
+        out = _stage(
+            membership=_membership(isAccepted=False),
+            purchases=[{}],
+            chat_proofs=[{"proof_type": "receipt_target", "status": "rejected"}],
+        )
+        assert out["stage"] == "receipt_rejected"
+        assert out["handoff_recommended"] is True
+
+    def test_proof_complete_pending_acceptance(self):
+        out = _stage(
+            membership=_membership(isAccepted=False),
+            purchases=[{}],
+            chat_proofs=[{
+                "proof_type": "receipt_other",
+                "status": "accepted",
+                "is_gig_completed": True,
+            }],
+        )
+        assert out["stage"] == "proof_complete_pending_acceptance"
+
+    def test_paid_wins_over_pending_acceptance(self):
+        out = _stage(
+            membership=_membership(isAccepted=False, hasPaid=True),
+            purchases=[{}],
+            chat_proofs=[{
+                "proof_type": "receipt_other",
+                "status": "accepted",
+                "is_gig_completed": True,
+            }],
+        )
+        assert out["stage"] == "paid"
 
     def test_rejected_handoff(self):
         out = _stage(membership=_membership(rejectionReason="duplicate"))
@@ -261,6 +308,51 @@ class TestBuildUserGigStatus:
         assert out["items"][0]["gig_name"] == "Pul Tool"
         assert out["items"][0]["stage"] == "need_purchase"
 
+    def test_unaccepted_row_is_coached_without_include_waitlisted(self, monkeypatch):
+        # The gate removal in compute_gig_stage is dead code unless the query that
+        # feeds it stops filtering these rows out by default.
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        user_id = "69a6f191cb29b0b371b3a156"
+        gig_oid = t._oid("69e6a4d6cea992cbda22b381")
+
+        mock_members = MagicMock()
+        mock_members.find.return_value = [
+            {
+                "member": t._oid(user_id),
+                "crwd_id": gig_oid,
+                "isAccepted": False,
+                "status": "Interested",
+            },
+        ]
+        mock_crwds = MagicMock()
+        mock_crwds.find.return_value = [
+            {"_id": gig_oid, "name": "Pul Tool", "gig_type": "web_based", "gig_stores": []},
+        ]
+        empty = MagicMock()
+        cur = MagicMock()
+        empty.find.return_value = cur
+        cur.sort.return_value = cur
+        cur.limit.return_value = []
+
+        with patch.object(
+            t.connection,
+            "_db",
+            return_value={
+                "added_crwd_members": mock_members,
+                "crwds": mock_crwds,
+                "user_product_purchases": empty,
+                "proof_submissions": empty,
+            },
+        ), patch.object(
+            t.stage,
+            "_gig_proof_completion",
+            return_value={"complete": False, "determinable": False, "outstanding": []},
+        ):
+            out = t.build_user_gig_status(user_id)
+
+        assert [i["stage"] for i in out["items"]] == ["need_purchase"]
+        assert "isAccepted" not in str(mock_members.find.call_args[0][0])
+
     def test_accepted_chat_receipt_not_need_receipt(self, monkeypatch):
         monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
         user_id = "69a6f191cb29b0b371b3a156"
@@ -470,6 +562,59 @@ class TestNextStepNeverSendsProofToTheApp:
         out = _stage(purchases=[])
         assert out["stage"] == "need_purchase"
         assert "in the app" in out["next_step"]
+
+
+class TestPendingAcceptanceNeverLeaksToTheMember:
+    """A member who bought the product and sent every proof must not be told they
+    were never formally accepted. That is internal admin state: it reads as a
+    problem, contradicts what lead intro told them, and raises a question no skill
+    can answer. These strings come from the tool, so no skill can override them."""
+
+    def _completed(self, **membership):
+        return _stage(
+            membership=_membership(**membership),
+            purchases=[{}],
+            chat_proofs=[{
+                "proof_type": "receipt_other",
+                "status": "accepted",
+                "is_gig_completed": True,
+            }],
+        )
+
+    def test_next_step_names_no_acceptance_mechanics(self):
+        out = self._completed(isAccepted=False)
+        assert out["stage"] == "proof_complete_pending_acceptance"
+        step = out["next_step"].lower()
+        for leak in ("accept", "pending", "under review", "finishing up", "queue"):
+            assert leak not in step
+
+    def test_reads_identically_to_an_accepted_member(self):
+        # Same situation, same words -- the stage split is for us, not for them.
+        assert (
+            self._completed(isAccepted=False)["next_step"]
+            == self._completed(isAccepted=True)["next_step"]
+        )
+
+    def test_stage_name_itself_never_reaches_the_next_step(self):
+        out = self._completed(isAccepted=False)
+        assert out["stage"] not in out["next_step"]
+
+
+class TestIsApprovedIsNotAcceptance:
+    """store_proof now writes isApproved, so a membership row can read
+    isAccepted:false + isApproved:true. Answering "am I accepted?" off the wrong
+    flag is the exact conflation this tool's terminology contract exists to stop."""
+
+    def test_tool_description_separates_the_two(self):
+        desc = t.CRWD_DB_SCHEMA["description"]
+        assert "isAccepted false + isApproved true" in desc
+        assert "that is NOT acceptance" in desc
+        assert "never narrate isApproved to a member" in desc
+
+    def test_tool_description_drops_the_stale_legacy_claim(self):
+        # It used to say isApproved was legacy and unused end-to-end. It is now
+        # written by store_proof, so that instruction would be actively wrong.
+        assert "legacy" not in t.CRWD_DB_SCHEMA["description"]
 
 
 class TestProductAssignedIsNotAPurchase:
