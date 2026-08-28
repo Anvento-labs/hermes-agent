@@ -49,6 +49,14 @@ reply.
      next step from tools.
 4. Stop after one reply. Later inbound messages continue on the normal Coach
    path (`crwd-gig-discovery`, etc.).
+5. If `crwd_db` is unavailable, times out, or errors: do not explain why, and
+   do not describe what you were trying to look up, what tool failed, or any
+   internal facts (`gig_id`, `user_id`, `user_created`, session/ingest state).
+   Send a short, generic reply instead — e.g. "Hey! Thanks for your interest —
+   having a little trouble pulling up the details right now, give me one
+   moment and I'll follow up." Nothing else. Treat this the same as any other
+   tool failure: the member never sees tool names, error text, or your
+   reasoning about them.
 
 ## Pitfalls
 
@@ -58,6 +66,9 @@ reply.
   CRWD user from this POST.
 - Do not call `crwd_handoff` unless tools show a real handoff trigger.
 - One reply only.
+- Never narrate tool availability/status, internal field names, or IDs in the
+  reply — not even as an aside before the "real" message. If `crwd_db` fails,
+  follow the fallback in step 5 instead of explaining the failure.
 
 ## Verification
 
