@@ -274,6 +274,8 @@ async def handle_post(request: Any, *, max_body_bytes: int) -> Any:
             "conversation_id": cw.get("conversation_id"),
             "chat_id": cw.get("chat_id"),
             "inbox_id": cw.get("inbox_id"),
+            "channel_type": cw.get("channel_type"),
+            "inbox_name": cw.get("inbox_name"),
             "contact_id": cw.get("contact_id"),
             "conversation_created": bool(cw.get("created")),
             "conversation_status": cw.get("conversation_status") or "pending",

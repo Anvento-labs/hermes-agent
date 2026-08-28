@@ -47,21 +47,30 @@ def _ensure(**overrides):
 class TestResolveApiInbox:
     def test_unique_api_inbox(self, chatwoot_env):
         with patch.object(
-            cw,
-            "api_request",
-            return_value=(True, {"payload": [API_INBOX, SMS_INBOX]}, ""),
+            cw, "api_request", return_value=(True, {"payload": [API_INBOX]}, "")
         ):
             inbox, err = cw.resolve_api_inbox("1")
         assert err == ""
         assert inbox["id"] == 5
 
-    def test_no_api_inbox(self, chatwoot_env):
+    def test_unique_sms_inbox(self, chatwoot_env):
+        """SMS/Twilio is an eligible lead inbox too, not just Channel::Api."""
         with patch.object(
             cw, "api_request", return_value=(True, {"payload": [SMS_INBOX]}, "")
         ):
             inbox, err = cw.resolve_api_inbox("1")
+        assert err == ""
+        assert inbox["id"] == 9
+
+    def test_no_eligible_inbox(self, chatwoot_env):
+        email_inbox = {"id": 3, "name": "Email", "channel_type": "Channel::Email"}
+        with patch.object(
+            cw, "api_request", return_value=(True, {"payload": [email_inbox]}, "")
+        ):
+            inbox, err = cw.resolve_api_inbox("1")
         assert inbox is None
-        assert "no Channel::Api" in err
+        assert "no inbox of type" in err
+        assert "Channel::Api" in err and "Channel::TwilioSms" in err
 
     def test_many_api_inboxes_without_prefer(self, chatwoot_env):
         with patch.object(
@@ -73,8 +82,10 @@ class TestResolveApiInbox:
         assert inbox is None
         assert "CHATWOOT_INBOX_ID" in err
 
-    def test_preferred_must_be_api(self, chatwoot_env, monkeypatch):
-        monkeypatch.setenv("CHATWOOT_INBOX_ID", "9")
+    def test_api_and_sms_together_without_prefer_is_ambiguous(self, chatwoot_env):
+        """Both types are eligible, so having one of each is still ambiguous --
+        this is exactly prod's shape (an unused API inbox + several SMS
+        inboxes), which is why prod must pin CHATWOOT_INBOX_ID explicitly."""
         with patch.object(
             cw,
             "api_request",
@@ -82,7 +93,32 @@ class TestResolveApiInbox:
         ):
             inbox, err = cw.resolve_api_inbox("1")
         assert inbox is None
-        assert "Channel::TwilioSms" in err
+        assert "CHATWOOT_INBOX_ID" in err
+
+    def test_preferred_sms_inbox_allowed(self, chatwoot_env, monkeypatch):
+        """A preferred Twilio SMS inbox is now accepted, not rejected."""
+        monkeypatch.setenv("CHATWOOT_INBOX_ID", "9")
+        with patch.object(
+            cw,
+            "api_request",
+            return_value=(True, {"payload": [API_INBOX, SMS_INBOX]}, ""),
+        ):
+            inbox, err = cw.resolve_api_inbox("1")
+        assert err == ""
+        assert inbox["id"] == 9
+
+    def test_preferred_must_be_eligible_type(self, chatwoot_env, monkeypatch):
+        monkeypatch.setenv("CHATWOOT_INBOX_ID", "3")
+        email_inbox = {"id": 3, "name": "Email", "channel_type": "Channel::Email"}
+        with patch.object(
+            cw,
+            "api_request",
+            return_value=(True, {"payload": [API_INBOX, email_inbox]}, ""),
+        ):
+            inbox, err = cw.resolve_api_inbox("1")
+        assert inbox is None
+        assert "Channel::Email" in err
+        assert "expected one of" in err
 
     def test_preferred_api_inbox(self, chatwoot_env, monkeypatch):
         monkeypatch.setenv("CHATWOOT_INBOX_ID", "6")
@@ -97,7 +133,12 @@ class TestResolveApiInbox:
 
 
 class TestEnsureConversation:
-    def test_reuses_api_thread_when_sms_also_exists(self, chatwoot_env):
+    def test_reuses_api_thread_when_sms_also_exists(self, chatwoot_env, monkeypatch):
+        # Both inbox types are now eligible on their own, so an account with
+        # one of each is ambiguous -- pin the target explicitly, same as prod
+        # would, so this test still exercises conversation-reuse and not
+        # inbox-resolution ambiguity.
+        monkeypatch.setenv("CHATWOOT_INBOX_ID", "5")
         calls = []
 
         def fake_api(method, path, body=None, query=None):
@@ -122,9 +163,13 @@ class TestEnsureConversation:
         assert out["created"] is False
         assert out["conversation_status"] == "open"
         assert out["chat_id"] == "1:42"
+        assert out["channel_type"] == "Channel::Api"
+        assert out["inbox_name"] == "API"
         assert not any(c[0] == "POST" and c[1].endswith("/conversations") for c in calls)
 
-    def test_creates_when_only_sms_conversation(self, chatwoot_env):
+    def test_creates_when_only_sms_conversation(self, chatwoot_env, monkeypatch):
+        monkeypatch.setenv("CHATWOOT_INBOX_ID", "5")
+
         def fake_api(method, path, body=None, query=None):
             if path.endswith("/inboxes"):
                 return True, {"payload": [API_INBOX, SMS_INBOX]}, ""
@@ -148,6 +193,66 @@ class TestEnsureConversation:
         assert out["created"] is True
         assert out["inbox_id"] == "5"
         assert out["conversation_status"] == "pending"
+
+    def test_reuses_existing_sms_conversation(self, chatwoot_env, monkeypatch):
+        """Prod's actual shape: pin CHATWOOT_INBOX_ID to the preferred SMS
+        inbox; if this contact already has a conversation there, reuse it
+        rather than opening a second thread."""
+        monkeypatch.setenv("CHATWOOT_INBOX_ID", "9")
+        calls = []
+
+        def fake_api(method, path, body=None, query=None):
+            calls.append((method, path))
+            if path.endswith("/inboxes"):
+                return True, {"payload": [API_INBOX, SMS_INBOX]}, ""
+            if "/contacts/search" in path:
+                return True, {"payload": [CONTACT]}, ""
+            if path.endswith("/conversations") and method == "GET":
+                return True, {
+                    "payload": [{"id": 200, "inbox_id": 9, "status": "pending"}]
+                }, ""
+            raise AssertionError(f"unexpected {method} {path}")
+
+        with patch.object(cw, "api_request", side_effect=fake_api):
+            out = _ensure()
+        assert out.get("error") is None
+        assert out["conversation_id"] == "200"
+        assert out["created"] is False
+        assert out["inbox_id"] == "9"
+        assert out["channel_type"] == "Channel::TwilioSms"
+        assert out["inbox_name"] == "SMS"
+        assert not any(m == "POST" and p.endswith("/conversations") for m, p in calls)
+
+    def test_creates_new_sms_conversation_when_none_exists(self, chatwoot_env, monkeypatch):
+        """No existing thread in the SMS inbox -- create one there, using the
+        phone number as source_id (Twilio needs the real number to deliver)."""
+        monkeypatch.setenv("CHATWOOT_INBOX_ID", "9")
+        contact = dict(CONTACT)
+        contact["contact_inboxes"] = []
+
+        def fake_api(method, path, body=None, query=None):
+            if path.endswith("/inboxes"):
+                return True, {"payload": [API_INBOX, SMS_INBOX]}, ""
+            if "/contacts/search" in path:
+                return True, {"payload": [contact]}, ""
+            if path.endswith("/conversations") and method == "GET":
+                return True, {"payload": []}, ""
+            if method == "POST" and path.endswith("/contact_inboxes"):
+                assert body["inbox_id"] == 9
+                return True, {"source_id": "+15551234567", "inbox": {"id": 9}}, ""
+            if method == "POST" and path.endswith("/conversations"):
+                assert body["inbox_id"] == 9
+                assert body["source_id"] == "+15551234567"
+                return True, {"id": 201, "inbox_id": 9}, ""
+            raise AssertionError(f"unexpected {method} {path}")
+
+        with patch.object(cw, "api_request", side_effect=fake_api):
+            out = _ensure()
+        assert out.get("error") is None
+        assert out["conversation_id"] == "201"
+        assert out["created"] is True
+        assert out["inbox_id"] == "9"
+        assert out["channel_type"] == "Channel::TwilioSms"
 
     def test_creates_contact_and_conversation_when_missing(self, chatwoot_env):
         def fake_api(method, path, body=None, query=None):
@@ -313,13 +418,14 @@ class TestEnsureConversation:
             out = _ensure(name="A Different Name")
         assert out.get("error") is None
 
-    def test_fails_without_api_inbox(self, chatwoot_env):
+    def test_fails_without_eligible_inbox(self, chatwoot_env):
+        email_inbox = {"id": 3, "name": "Email", "channel_type": "Channel::Email"}
         with patch.object(
-            cw, "api_request", return_value=(True, {"payload": [SMS_INBOX]}, "")
+            cw, "api_request", return_value=(True, {"payload": [email_inbox]}, "")
         ):
             out = _ensure()
         assert out.get("error")
-        assert "Channel::Api" in out["error"]
+        assert "no inbox of type" in out["error"]
 
     def test_fails_without_account(self, monkeypatch):
         monkeypatch.setenv("CHATWOOT_BASE_URL", "https://chat.example.com")

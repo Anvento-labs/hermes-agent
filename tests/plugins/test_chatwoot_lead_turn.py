@@ -109,6 +109,37 @@ class TestDispatchLeadTurn:
         assert _webhook_crwd_hint_value() == "aaaaaaaaaaaaaaaaaaaaaaaa"
         assert webhook_conversation_status() == "pending"
         assert a._conv_channel.get("1:42") == "Channel::Api"
+        assert "inbox: API (Channel::Api)" in event.source.chat_topic
+        reset_webhook_crwd_hint()
+        reset_webhook_conversation_status()
+
+    @pytest.mark.asyncio
+    async def test_uses_real_resolved_channel_for_sms_lead(self):
+        """A lead routed to an SMS inbox must be remembered as SMS -- get this
+        wrong and the reply goes out as raw markdown to a real phone, and
+        every later turn in the thread stays mis-formatted too (remember()
+        persists per chat_id, not just for this one message)."""
+        a = _adapter()
+        a._message_handler = AsyncMock(return_value=None)
+        captured = {}
+
+        async def fake_handle(self, event):
+            captured["event"] = event
+
+        reset_webhook_crwd_hint()
+        reset_webhook_conversation_status()
+        sms_ctx = _ctx(
+            chat_id="1:99",
+            channel_type="Channel::TwilioSms",
+            inbox_name="SMS 186",
+            inbox_id="9",
+        )
+        with patch.object(BasePlatformAdapter, "handle_message", fake_handle):
+            with patch.object(cw.ChatwootAdapter, "handle_message", new=AsyncMock()):
+                await lt.dispatch_lead_turn(a, sms_ctx)
+        assert a._conv_channel.get("1:99") == "Channel::TwilioSms"
+        assert "inbox: SMS 186 (Channel::TwilioSms)" in captured["event"].source.chat_topic
+        assert captured["event"].raw_message["inbox"]["channel_type"] == "Channel::TwilioSms"
         reset_webhook_crwd_hint()
         reset_webhook_conversation_status()
 
