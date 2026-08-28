@@ -204,6 +204,18 @@ def _waitlisted_member_filter(user_id: str) -> Dict[str, Any]:
     }
 
 
+def _all_member_filter(user_id: str) -> Dict[str, Any]:
+    """Every non-deleted membership row, accepted or not — for coaching only.
+
+    Acceptance no longer gates progression, so ``get_user_gig_status`` must see
+    an ``isAccepted: false`` row to coach it at all; ``compute_gig_stage``, not
+    this filter, decides what to say about it. Deliberately NOT used by
+    ``get_user_gigs`` / ``get_waitlisted_gigs``, which still mirror the app's own
+    Active vs Pending Approval tabs.
+    """
+    return {**_member_or_filter(user_id), "isDeleted": {"$ne": True}}
+
+
 def _gig_type_key(gig: Dict[str, Any]) -> str:
     gt = str(gig.get("gig_type") or "").strip().lower()
     if gt in ("irl", "in_store", "live"):
@@ -247,3 +259,130 @@ def _sort_members_by_gig_end_date(
         members,
         key=lambda m: _end_date_sort_key(gigs_by_id.get(str(m.get("crwd_id")))),
     )
+
+
+def _membership_payload(doc: Optional[Dict[str, Any]], *, created: bool) -> str:
+    return json.dumps(
+        {
+            "_type": "user_gig_interest",
+            "created": created,
+            "items": [_serialize_doc(doc)] if doc else [],
+            "error": None,
+        },
+        ensure_ascii=False,
+    )
+
+
+def _add_user_gig_interest(
+    user_id: str = "",
+    crwd_id: str = "",
+    gig_id: str = "",
+    business_owner_id: str = "",
+) -> str:
+    """Record pending gig interest (not enrollment). Lead ingest + Coach action."""
+    user_id = (user_id or "").strip()
+    crwd_id = (crwd_id or gig_id or "").strip()
+    owner_raw = (business_owner_id or "").strip()
+    user_oid = _oid(user_id)
+    gig_oid = _oid(crwd_id)
+    if user_oid is None or gig_oid is None:
+        return tool_error("user_id and crwd_id must be valid ObjectIds")
+
+    db = _conn._db()
+    gig = db[_COLL_CRWDS].find_one(
+        {
+            "_id": gig_oid,
+            "isDeleted": {"$ne": True},
+            "isArchived": {"$ne": True},
+        },
+        {"business_owner_id": 1},
+        max_time_ms=_MAX_TIME_MS,
+    )
+    if not gig:
+        return tool_error("unknown gig")
+
+    owner_oid = _oid(owner_raw)
+    if owner_oid is None:
+        owner_oid = gig.get("business_owner_id")
+
+    members = db[_COLL_MEMBERS]
+    existing = members.find_one(
+        {
+            "crwd_id": gig_oid,
+            "member": {"$in": _id_values(user_id)},
+            "isDeleted": {"$ne": True},
+        },
+        _MEMBER_FIELDS,
+        max_time_ms=_MAX_TIME_MS,
+    )
+    if existing:
+        return _membership_payload(existing, created=False)
+
+    now = _conn._now()
+    doc: Dict[str, Any] = {
+        "crwd_id": gig_oid,
+        "member": user_oid,
+        "business_owner_id": owner_oid,
+        "status": "Interested",
+        "isInterested": True,
+        "isDeleted": False,
+        "isAccepted": False,
+        "isArrived": False,
+        "isCompleted": False,
+        "hasPaid": False,
+        "isApproved": False,
+        "proof_of_document": "",
+        "store_requests": [],
+        "product_requests": [],
+        "initial_product_ids": [],
+        "date": now,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    result = members.insert_one(doc)
+    created = members.find_one(
+        {"_id": result.inserted_id}, _MEMBER_FIELDS, max_time_ms=_MAX_TIME_MS
+    )
+    if created is None:
+        created = {"_id": result.inserted_id, "crwd_id": gig_oid, "member": user_oid}
+    return _membership_payload(created, created=True)
+
+
+def _mark_membership_approved(user_id: str, crwd_id: str) -> bool:
+    """Flip ``isApproved`` true once a member's gig proof is complete.
+
+    Called from ``proofs._store_proof`` at the moment it sets
+    ``is_gig_completed``; never exposed as its own action, so the model cannot
+    approve anyone by asking. Surfaces the member in CRWD's own "approved"
+    bucket (their campaign list reads accepted > approved > pending) without
+    claiming acceptance, completion, or payment -- those stay admin-owned.
+
+    Skips rows carrying a rejection: CRWD computes rejected as *rejectionReason
+    set AND isApproved is not true*, so approving one would silently un-reject it.
+
+    Best-effort by design. ``proof_submissions`` is the record of truth; a
+    failure here must never fail the proof write that already succeeded.
+    """
+    user_id = (user_id or "").strip()
+    crwd_id = (crwd_id or "").strip()
+    if not user_id or not crwd_id:
+        return False
+    gig_oid = _oid(crwd_id)
+    try:
+        result = _conn._db()[_COLL_MEMBERS].update_one(
+            {
+                **_member_or_filter(user_id),
+                "crwd_id": gig_oid if gig_oid is not None else crwd_id,
+                "isDeleted": {"$ne": True},
+                "rejectionReason": {"$in": [None, ""]},
+                "rejectionNotes": {"$in": [None, ""]},
+            },
+            {"$set": {"isApproved": True, "updatedAt": _conn._now()}},
+        )
+        return result.matched_count > 0
+    except Exception:
+        logger.warning(
+            "could not mark membership approved user_id=%s crwd_id=%s",
+            user_id, crwd_id, exc_info=True,
+        )
+        return False

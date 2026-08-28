@@ -8,7 +8,7 @@ CRWD_DB_SCHEMA = {
         "Query CRWD's MongoDB data: gigs/campaigns, users, campaign "
         "membership, a member's accepted products (buy links), their receipt/"
         "proof upload status, and their account notifications. Read-only apart "
-        "from the proof-submission actions below. "
+        "from the proof-submission actions and add_user_gig_interest below. "
         "list_active_gigs = active joinable gigs the member has NOT joined "
         "(excludes spots-full campaigns where accepted members >= number_of_people, "
         "matching Explore); get_user_gigs / "
@@ -25,16 +25,28 @@ CRWD_DB_SCHEMA = {
         "(set full=true or top_n=1 for the full gig payload). Each store carries a "
         "requirements dict (requires_receipt, requires_review_link, requires_review_rating, "
         "requires_ugc_post, ...) — these flags are the gig's proof spec; use them, not "
-        "type_of_work_proof, which is unset on almost every gig. "
+        "type_of_work_proof, which is unset on almost every gig. A gig may also carry "
+        "effective_product_funds (money CRWD gives the member to buy the product, on top "
+        "of the payout fee); when it is null — the default on every gig today — the member "
+        "buys the product themselves, and you say nothing about product funds at all, not "
+        "even to rule them out. "
         "get_user_gig_history returns past membership rows including rejected/completed gigs. "
-        "get_waitlisted_gigs returns gigs the member applied for but is not "
-        "yet accepted into (isAccepted false / pending acceptance). "
+        "add_user_gig_interest records pending interest on a gig "
+        "(status Interested, isInterested true, isAccepted false) — it does not "
+        "enroll the member or count toward capacity, but the member can still buy "
+        "the product and submit proof from that row alone: acceptance no longer "
+        "gates any of the work. "
         "get_user_gig_status returns per-gig stage and personalized next_step "
-        "from membership + proof progress. Always relay next_step verbatim or "
-        "closely paraphrased — never compose your own enrollment/acceptance/"
-        "buy-link sentence from raw fields, and never read isApproved (legacy, "
-        "unused end-to-end). 'Accepted' = let into the gig; 'approved' = proof "
-        "validated and cleared for payout — never use these interchangeably. "
+        "from membership + proof progress, for every non-deleted membership row "
+        "regardless of isAccepted (include_waitlisted is now inert). Always relay "
+        "next_step verbatim or closely paraphrased — never compose your own "
+        "enrollment/acceptance/approval/buy-link sentence from raw fields. "
+        "'Accepted' = let into the gig; 'approved' = proof validated and cleared "
+        "for payout — never use these interchangeably. isApproved is written by "
+        "store_proof once a member's required proof is complete, so a row can read "
+        "isAccepted false + isApproved true: that is NOT acceptance. Answer "
+        "'am I accepted?' from isAccepted alone, never narrate isApproved to a "
+        "member, and never tell anyone their membership was approved. "
         "In the progress dict, product_assigned means a buy link/product is on "
         "file for them — it is NOT evidence they bought anything, so never say "
         "their purchase is confirmed or their order registered. Proof is "
@@ -51,7 +63,9 @@ CRWD_DB_SCHEMA = {
         "submission history for a proof id across every status; store_proof records one "
         "validated submission (reason_code and reason are required on every status, "
         "accepted included) and sets is_gig_completed itself on the proof that leaves "
-        "nothing outstanding. check_gig_proof_completion(user_id, crwd_id) reports which "
+        "nothing outstanding; that same completing call silently flips isApproved on the "
+        "membership row, which is a backend side effect and never something to mention. "
+        "check_gig_proof_completion(user_id, crwd_id) reports which "
         "required artifacts are accepted and which are still outstanding — use it to know "
         "what to coach for, and to decide whether the gig is done. Proof ids are normalized "
         "before comparison, so REC#/Order # prefixes, spacing and hyphens do not matter, "
@@ -70,7 +84,7 @@ CRWD_DB_SCHEMA = {
                     "get_user_receipts", "get_user_notifications",
                     "store_proof", "get_user_proofs", "check_duplicate_proof",
                     "find_proof", "check_gig_proof_completion",
-                    "mark_proof_risk_scored", "custom_query",
+                    "mark_proof_risk_scored", "add_user_gig_interest", "custom_query",
                 ],
             },
             "limit": {"type": "integer", "description": "max rows per page (capped at 20; list_active_gigs default 5; get_user_gig_status default 20)"},
@@ -88,7 +102,8 @@ CRWD_DB_SCHEMA = {
                     "users._id. For list_active_gigs: exclude gigs the member "
                     "already has a membership for. Also used by get_user_gigs, "
                     "get_user_gig_history, get_waitlisted_gigs, get_user_products, get_user_receipts, "
-                    "get_user_notifications, get_user_gig_status. Required by store_proof; "
+                    "get_user_notifications, get_user_gig_status, add_user_gig_interest. "
+                    "Required by store_proof; "
                     "optional on check_duplicate_proof (to tell a self-resubmit from another "
                     "member's proof) and find_proof (to filter)."
                 ),
@@ -103,7 +118,14 @@ CRWD_DB_SCHEMA = {
             },
             "gig_id": {
                 "type": "string",
-                "description": "Alias of crwd_id for get_user_products",
+                "description": "Alias of crwd_id for get_user_products and add_user_gig_interest",
+            },
+            "business_owner_id": {
+                "type": "string",
+                "description": (
+                    "Gig owner users._id (add_user_gig_interest). If omitted, "
+                    "copied from crwd.business_owner_id."
+                ),
             },
             "gig_name": {
                 "type": "string",
@@ -114,7 +136,11 @@ CRWD_DB_SCHEMA = {
             },
             "include_waitlisted": {
                 "type": "boolean",
-                "description": "Include waitlisted memberships (get_user_gig_status)",
+                "description": (
+                    "Inert (get_user_gig_status). Every non-deleted membership row is "
+                    "returned regardless of isAccepted, so this changes nothing; kept "
+                    "only so existing callers don't break."
+                ),
             },
             "query": {"type": "string", "description": "gig _id, name, or free text to fuzzy-match (get_gig_details)"},
             "top_n": {"type": "integer", "description": "max candidates to return, default 3, max 10 (get_gig_details)"},

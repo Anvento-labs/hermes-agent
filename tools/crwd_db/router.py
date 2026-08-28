@@ -11,6 +11,7 @@ from tools.crwd_db.connection import _HARD_LIMIT, check_crwd_db_requirements
 from tools.crwd_db.custom_query import _custom_query
 from tools.crwd_db.gigs import _get_gig_details, _list_active_gigs
 from tools.crwd_db.membership import (
+    _add_user_gig_interest,
     _get_user_gig_history,
     _get_user_gigs,
     _get_waitlisted_gigs,
@@ -62,6 +63,12 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
         if action == "get_waitlisted_gigs":
             return _get_waitlisted_gigs(
                 user_id=args.get("user_id", ""), limit=args.get("limit", 10)
+            )
+        if action == "add_user_gig_interest":
+            return _add_user_gig_interest(
+                user_id=args.get("user_id", ""),
+                crwd_id=args.get("crwd_id", "") or args.get("gig_id", ""),
+                business_owner_id=args.get("business_owner_id", ""),
             )
         if action == "get_user_products":
             return _get_user_products(
@@ -142,7 +149,8 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
             "get_user_gigs, get_user_gig_history, get_waitlisted_gigs, get_user_gig_status, "
             "get_user_products, get_user_receipts, get_user_notifications, "
             "store_proof, get_user_proofs, check_duplicate_proof, find_proof, "
-            "check_gig_proof_completion, mark_proof_risk_scored, custom_query"
+            "check_gig_proof_completion, mark_proof_risk_scored, "
+            "add_user_gig_interest, custom_query"
         )
     except RuntimeError as exc:
         # Config/connection problems -- safe to surface the short message.

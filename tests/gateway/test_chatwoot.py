@@ -145,7 +145,9 @@ class TestConfig:
         monkeypatch.setenv("CHATWOOT_AGENT_TOKEN", "agent-tok")
         monkeypatch.setenv("CHATWOOT_HOME_CHANNEL", "1:42")
         monkeypatch.setenv("CHATWOOT_PRIVATE_NOTE_TRACE", "true")
+        monkeypatch.setenv("CHATWOOT_INBOX_ID", "7")
         seed = cw._env_enablement()
+        assert seed["inbox_id"] == "7"
         assert seed["base_url"] == "https://cw.example.com"  # stripped
         assert seed["token"] == "bot-tok"
         assert seed["agent_token"] == "agent-tok"

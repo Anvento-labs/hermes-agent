@@ -94,9 +94,71 @@ skill was written, but Dot's own docs are the source of truth for edge cases.
   anything you can't answer confidently, **hand off** (`crwd-handoff`). Don't guess about
   money already gone out.
 
-## Payout ≠ reimbursement
+## The two payment types
+
+CRWD sends members money for two different reasons, and both arrive through Dot:
+
+| | **Product funds** | **Payout** |
+|---|---|---|
+| What it is | Money to **buy the product** with | The **fee for completing the gig** |
+| When | Before they shop | After their proof is approved |
+| Is it earnings? | **No** — it's spending money | **Yes** |
+| Gig field | `effective_product_funds` | `effective_payout` |
+
+Only some gigs have product funds. Check the gig's **`effective_product_funds`**
+(`get_gig_details` / `list_active_gigs`) before framing money at all:
+
+- **It has a value** → two separate amounts, described separately. Never add them together
+  or quote one as if it were the other.
+- **It is null** → the default, and true of every gig today. Use the reimbursement framing
+  below, and **say nothing about product funds at all** — not even to rule them out. "This
+  gig doesn't include product funds" is a claim about machinery the member can't see, and
+  it goes stale the moment CRWD ships product funds on some gigs.
+
+## Telling the two apart in Dot's transfer history
+
+Dot does **not** have a field for which of the two a transfer is. You work it out. Two
+traps first, both of which produce a confident wrong answer:
+
+- **`type: "payout"` on a transfer does not mean "the gig payout."** It is Dot's own
+  mechanism word — money leaving to the member — and **both** payment types arrive as
+  `type: "payout"`. Never classify on this field.
+- **Dot amounts are in cents; CRWD's are in dollars.** A `$40` payout is `4000` in Dot.
+  Convert before comparing or every match fails.
+
+Work down this ladder and stop at the first rung that actually settles it:
+
+1. **The transfer's own text.** Read the free text CRWD attached — `metadata` on the
+   transfer, and the `memo` when the transfer came from a payout link (`payout_link_id`
+   is set; `get_transfer` for the detail). If it names which payment this is, that is
+   **authoritative** — believe it over any amount arithmetic.
+2. **Match the amount against that gig's two known numbers.** Pull `effective_payout` and
+   `effective_product_funds` for the gig from `crwd_db`, convert Dot's cents to dollars,
+   and see which one the transfer equals. Conclusive only when **exactly one** matches.
+3. **Sequence, as corroboration only.** Product funds necessarily arrive *before* the
+   purchase; the payout lands *after* proof is approved. Use this to sanity-check a match
+   from rung 1 or 2 — **never** as the basis for a label on its own.
+4. **Still ambiguous → don't label it.** Both amounts equal, no text, several gigs with
+   the same figure, or no gig context at all. Say what you can actually see — the amount,
+   the date, and whether Dot sent it — and leave the reason unnamed. If the member needs
+   to know which it was, **hand off** (`crwd-handoff`). Guessing here tells someone their
+   grocery money was their wages.
+
+**"How much have I earned?" counts payouts only.** Product funds are not earnings — they
+are money to spend on the product. Summing every transfer overstates what the member made,
+so exclude anything you have identified as product funds, and if you could not classify
+some transfers, say your total covers only what you could confirm rather than quietly
+including them.
+
+On a gig whose `effective_product_funds` is null, all of this collapses: every transfer for
+it is a payout, and there is nothing to disambiguate.
+
+## Payout ≠ reimbursement (gigs with no product funds — the default)
 
 - For **live gigs**, the member **keeps the product** they bought. The payout is the **fee
   for completing the gig**, not a refund of the purchase.
 - If a member asks "do I get my money back for what I bought?" → the answer is **no**: they
   keep the item, and the payout is separate. This is a fixed fact — say it plainly, don't hedge.
+- This holds whenever `effective_product_funds` is null. On a gig that *does* carry
+  product funds, those funds are what covers the purchase — check the field before
+  reciting this.

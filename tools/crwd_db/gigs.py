@@ -81,6 +81,27 @@ def _effective_payout(gig: Dict[str, Any]) -> Any:
     return max(amounts) if amounts else payout
 
 
+def _effective_product_funds(gig: Dict[str, Any]) -> Any:
+    """Money given to buy the product, or None when the gig doesn't work that way.
+
+    Same top-level-then-per-store shape as ``_effective_payout``. ``None`` is the
+    default and today's only case: the member pays for the product themselves and
+    keeps it, and the payout is a fee rather than a refund.
+    """
+    funds = gig.get("product_funds")
+    try:
+        if funds and float(funds) > 0:
+            return funds
+    except (TypeError, ValueError):
+        pass
+    amounts = []
+    for store in gig.get("gig_stores") or []:
+        amt = store.get("product_funds")
+        if isinstance(amt, (int, float)):
+            amounts.append(amt)
+    return max(amounts) if amounts else None
+
+
 # What proof a store demands. These flags -- not ``type_of_work_proof``, which is
 # null on almost every gig -- are the real proof spec, so surface them on the slim
 # payload rather than only inside _full_gig's raw gig_stores dump.
@@ -102,6 +123,7 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
         stores.append({
             "store_name": store.get("store_name"),
             "payout_amount": store.get("payout_amount"),
+            "product_funds": store.get("product_funds"),
             "requirements": _store_requirements(store),
             "products": [
                 {"name": p.get("name"), "product_url": p.get("product_url")}
@@ -122,6 +144,7 @@ def _slim_gig(gig: Dict[str, Any]) -> Dict[str, Any]:
         "start_date": gig.get("start_date"),
         "end_date": gig.get("end_date"),
         "effective_payout": _effective_payout(gig),
+        "effective_product_funds": _effective_product_funds(gig),
         "type_of_work_proof": gig.get("type_of_work_proof"),
         "image": gig.get("image"),
         "stores": stores,

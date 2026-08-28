@@ -14,10 +14,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-import urllib.error
-import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from plugins.platforms.chatwoot.client import api_request, base_url, user_token
 from plugins.platforms.chatwoot.labels import (
     APPLIED_LABELS,
     APPLIED_LABEL_TITLES,
@@ -25,18 +24,16 @@ from plugins.platforms.chatwoot.labels import (
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_S = 8
-
 
 # --- Availability ---
 
 
 def _agent_token() -> str:
-    return (os.getenv("CHATWOOT_AGENT_TOKEN", "") or os.getenv("CHATWOOT_TOKEN", "")).strip()
+    return user_token()
 
 
 def _base_url() -> str:
-    return os.getenv("CHATWOOT_BASE_URL", "").strip().rstrip("/")
+    return base_url()
 
 
 def check_chatwoot_labels_requirements() -> bool:
@@ -89,46 +86,10 @@ def _api_request(
     method: str,
     path: str,
     body: Optional[Dict[str, Any]] = None,
+    query: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, Any, str]:
     """Call Chatwoot Application API. Returns ``(ok, parsed_json_or_none, error)``."""
-    base = _base_url()
-    token = _agent_token()
-    if not base or not token:
-        return False, None, "Chatwoot not configured"
-
-    url = f"{base}{path}"
-    data = json.dumps(body).encode("utf-8") if body is not None else None
-    req = urllib.request.Request(
-        url,
-        data=data,
-        method=method,
-        headers={
-            "Content-Type": "application/json",
-            "api_access_token": token,
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
-            raw = resp.read().decode("utf-8")
-            parsed = json.loads(raw) if raw.strip() else None
-            if 200 <= resp.status < 300:
-                return True, parsed, ""
-            return False, parsed, f"HTTP {resp.status}"
-    except urllib.error.HTTPError as exc:
-        err_body = ""
-        try:
-            err_body = exc.read().decode("utf-8")
-        except Exception:
-            pass
-        parsed = None
-        if err_body.strip():
-            try:
-                parsed = json.loads(err_body)
-            except json.JSONDecodeError:
-                parsed = {"message": err_body}
-        return False, parsed, f"HTTP {exc.code}"
-    except Exception as exc:
-        return False, None, str(exc)
+    return api_request(method, path, body=body, query=query)
 
 
 def _normalize_label(title: str) -> str:

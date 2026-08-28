@@ -1,7 +1,7 @@
 """Tests for the crwd_db tool module (no live database required)."""
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 
@@ -1178,6 +1178,107 @@ class TestFindProof:
         assert out["count"] == 0
 
 
+class TestGigCompletionApproval:
+    """Completing a gig's proof flips isApproved and nothing else.
+
+    added_crwd_members is shared with CRWD's own app, so this write has to stay
+    the narrowest possible one: acceptance, completion, payment and status all
+    remain theirs to set.
+    """
+
+    def _run(self, members, *, complete=True, duplicate_key=False, **over):
+        proofs = MagicMock()
+        proofs.find_one.return_value = None
+        if duplicate_key:
+            from pymongo.errors import DuplicateKeyError
+
+            proofs.insert_one.side_effect = DuplicateKeyError("dup")
+        else:
+            proofs.insert_one.return_value.inserted_id = t._oid(
+                "69b8614f1083b9302fd0a9a7"
+            )
+        users = MagicMock()
+        users.find_one.return_value = {"email": "a@example.com"}
+        db = _fake_db({
+            "proof_submissions": proofs,
+            "users": users,
+            "added_crwd_members": members,
+        })
+        completion = {
+            "determinable": True,
+            "outstanding": ["requires_receipt"] if complete else ["requires_ugc_post"],
+            "accepts": {
+                "requires_receipt": ["receipt_target"],
+                "requires_ugc_post": ["ugc_link"],
+            },
+        }
+        with patch.object(t.connection, "_db", return_value=db), patch.object(
+            t.proofs, "_gig_proof_completion", return_value=completion
+        ):
+            return json.loads(t.crwd_db_tool(_store_args(
+                crwd_id="69e6a4d6cea992cbda22b381", **over
+            )))
+
+    def test_flips_is_approved_and_nothing_else(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        members.update_one.return_value.matched_count = 1
+        out = self._run(members)
+
+        assert out["is_gig_completed"] is True
+        assert members.update_one.call_count == 1
+        update = members.update_one.call_args[0][1]
+        assert update == {"$set": {"isApproved": True, "updatedAt": ANY}}
+        for owned_by_crwd in ("isAccepted", "isCompleted", "hasPaid", "status"):
+            assert owned_by_crwd not in update["$set"]
+
+    def test_skips_rows_carrying_a_rejection(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        members.update_one.return_value.matched_count = 1
+        self._run(members)
+        # CRWD reads rejected as "rejectionReason set AND not isApproved", so
+        # approving a rejected row would quietly un-reject it.
+        filt = members.update_one.call_args[0][0]
+        assert filt["rejectionReason"] == {"$in": [None, ""]}
+        assert filt["rejectionNotes"] == {"$in": [None, ""]}
+
+    def test_no_write_until_the_gig_is_actually_complete(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        out = self._run(members, complete=False)
+        assert out["is_gig_completed"] is False
+        assert members.update_one.called is False
+
+    def test_resent_proof_does_not_write_twice(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        out = self._run(members, duplicate_key=True)
+        assert out["already_recorded"] is True
+        assert members.update_one.called is False
+
+    def test_payload_carries_no_membership_claim(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        members.update_one.return_value.matched_count = 1
+        out = self._run(members)
+        # crwd-proof-validator reads this payload and must never narrate gig
+        # status. A field named for membership approval is an invitation to.
+        blob = json.dumps(out).lower()
+        assert "isapproved" not in blob
+        assert "approved" not in blob
+        assert "membership" not in blob
+
+    def test_write_failure_never_fails_the_proof(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        members.update_one.side_effect = RuntimeError("mongo down")
+        out = self._run(members)
+        # proof_submissions is the record of truth; the flag is secondary.
+        assert out["stored"] is True
+        assert out["is_gig_completed"] is True
+
+
 class TestProofWriteScope:
     """The write path must stay narrow now that the module is no longer read-only."""
 
@@ -1209,6 +1310,8 @@ class TestProofWriteScope:
         with patch.object(t.connection, "_db", return_value=db):
             t.crwd_db_tool(_store_args())
         # users is read for the audit email; proof_submissions is the only write.
+        # added_crwd_members stays untouched here because _store_args carries no
+        # crwd_id, so is_gig_completed is never set -- see TestGigCompletionApproval.
         assert set(touched) <= {"proof_submissions", "users"}
         assert users.insert_one.called is False
         assert users.update_one.called is False
@@ -2072,3 +2175,229 @@ class TestArchivedGigsAreInvisible:
             out = json.loads(t.crwd_db_tool({
                 "action": "get_user_gigs", "user_id": "user-a"}))
         assert out["items"] == []
+
+
+class TestCreateUser:
+    def test_not_an_llm_action(self):
+        assert "create_user" not in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+
+    def test_refuses_empty_identity(self):
+        out = json.loads(t._create_user())
+        assert "email or phone" in out["error"]
+
+    def test_reuses_email_hit_without_overwrite(self):
+        users = MagicMock()
+        users.find_one.return_value = {
+            "_id": "u1",
+            "email": "a@b.c",
+            "full_name": "Old Name",
+        }
+        roles = MagicMock()
+        db = _fake_db({"users": users, "roles": roles})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(email="A@B.C", full_name="New Name"))
+        assert out["created"] is False
+        assert out["items"][0]["full_name"] == "Old Name"
+        assert "password" not in out["items"][0]
+        assert users.insert_one.called is False
+        assert users.update_one.called is False
+        roles.find_one.assert_not_called()
+
+    def test_phone_fallback_after_email_miss(self):
+        users = MagicMock()
+        users.find_one.side_effect = [
+            None,
+            {"_id": "u2", "phone": "+15550001111", "email": ""},
+        ]
+        db = _fake_db({"users": users, "roles": MagicMock()})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(email="new@x.com", phone="+15550001111"))
+        assert out["created"] is False
+        assert users.find_one.call_count == 2
+        assert users.insert_one.called is False
+
+    def test_inserts_on_miss(self):
+        oid = t._oid("69b8614f1083b9302fd0a9a7")
+        users = MagicMock()
+        users.find_one.side_effect = [
+            None,
+            None,
+            {"_id": oid, "email": "n@x.com", "phone": "+15550001111", "full_name": "N X"},
+        ]
+        users.insert_one.return_value.inserted_id = oid
+        roles = MagicMock()
+        roles.find_one.return_value = {"_id": "role-user"}
+        db = _fake_db({"users": users, "roles": roles})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(
+                email="n@x.com", phone="+15550001111",
+                first_name="N", last_name="X", full_name="N X",
+            ))
+        assert out["created"] is True
+        doc = users.insert_one.call_args[0][0]
+        assert doc["email"] == "n@x.com"
+        assert doc["phone"] == "+15550001111"
+        assert doc["role"] == "role-user"
+        assert doc["status"] == "Active"
+        assert doc["password"] == ""
+        assert doc["isEmailVerified"] is True
+        assert doc["blacklistToken"] == []
+        assert doc["isDeleted"] is False
+        assert doc["isBlocked"] is False
+        assert "password" not in out["items"][0]
+        roles.find_one.assert_called_once()
+
+    def test_errors_when_member_role_missing(self):
+        users = MagicMock()
+        users.find_one.return_value = None
+        roles = MagicMock()
+        roles.find_one.return_value = None
+        db = _fake_db({"users": users, "roles": roles})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._create_user(email="n@x.com"))
+        assert "role" in out["error"]
+        assert users.insert_one.called is False
+
+
+class TestAddUserGigInterest:
+    _USER = "aaaaaaaaaaaaaaaaaaaaaaaa"
+    _GIG = "69b8614f1083b9302fd0a9a7"
+    _OWNER = "69a6f191cb29b0b371b3a14f"
+
+    def test_in_schema_enum(self):
+        assert "add_user_gig_interest" in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+        assert "create_user" not in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+
+    def test_refuses_bad_ids(self):
+        out = json.loads(t._add_user_gig_interest(user_id="x", crwd_id="y"))
+        assert "ObjectId" in out["error"]
+
+    def test_unknown_gig(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        crwds = MagicMock()
+        crwds.find_one.return_value = None
+        members = MagicMock()
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._add_user_gig_interest(
+                user_id=self._USER, crwd_id=self._GIG, business_owner_id=self._OWNER,
+            ))
+        assert "unknown gig" in out["error"]
+        assert members.insert_one.called is False
+
+    def test_reuses_existing_row(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        crwds = MagicMock()
+        crwds.find_one.return_value = {"_id": t._oid(self._GIG), "business_owner_id": t._oid(self._OWNER)}
+        members = MagicMock()
+        members.find_one.return_value = {
+            "_id": "mem1",
+            "status": "Active",
+            "isAccepted": True,
+            "isInterested": False,
+        }
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t._add_user_gig_interest(
+                user_id=self._USER, crwd_id=self._GIG, business_owner_id=self._OWNER,
+            ))
+        assert out["created"] is False
+        assert out["items"][0]["isAccepted"] is True
+        assert members.insert_one.called is False
+
+    def test_inserts_interested_row(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        gig_oid = t._oid(self._GIG)
+        owner_oid = t._oid(self._OWNER)
+        mem_oid = t._oid("bbbbbbbbbbbbbbbbbbbbbbbb")
+        crwds = MagicMock()
+        crwds.find_one.return_value = {"_id": gig_oid, "business_owner_id": owner_oid}
+        members = MagicMock()
+        members.find_one.side_effect = [
+            None,
+            {
+                "_id": mem_oid,
+                "crwd_id": gig_oid,
+                "status": "Interested",
+                "isInterested": True,
+                "isAccepted": False,
+                "business_owner_id": owner_oid,
+            },
+        ]
+        members.insert_one.return_value.inserted_id = mem_oid
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            out = json.loads(t.crwd_db_tool({
+                "action": "add_user_gig_interest",
+                "user_id": self._USER,
+                "gig_id": self._GIG,
+                "business_owner_id": self._OWNER,
+            }))
+        assert out["created"] is True
+        doc = members.insert_one.call_args[0][0]
+        assert doc["status"] == "Interested"
+        assert doc["isInterested"] is True
+        assert doc["isAccepted"] is False
+        assert doc["business_owner_id"] == owner_oid
+        assert doc["crwd_id"] == gig_oid
+
+    def test_falls_back_to_gig_owner(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        owner_oid = t._oid(self._OWNER)
+        crwds = MagicMock()
+        crwds.find_one.return_value = {"business_owner_id": owner_oid}
+        members = MagicMock()
+        members.find_one.side_effect = [None, {"_id": "m"}]
+        members.insert_one.return_value.inserted_id = "m"
+        db = _fake_db({"crwds": crwds, "added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            t._add_user_gig_interest(user_id=self._USER, crwd_id=self._GIG)
+        assert members.insert_one.call_args[0][0]["business_owner_id"] == owner_oid
+
+
+class TestMarkMembershipApproved:
+    """Direct coverage of the isApproved write, apart from the store_proof path."""
+
+    _USER = "69a6f191cb29b0b371b3a156"
+    _GIG = "69e6a4d6cea992cbda22b381"
+
+    def _members(self, matched=1):
+        members = MagicMock()
+        members.update_one.return_value.matched_count = matched
+        return members
+
+    def test_sets_only_is_approved(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = self._members()
+        db = _fake_db({"added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            assert t._mark_membership_approved(self._USER, self._GIG) is True
+        assert members.update_one.call_args[0][1] == {
+            "$set": {"isApproved": True, "updatedAt": ANY}
+        }
+
+    def test_matches_the_gig_by_object_id(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = self._members()
+        db = _fake_db({"added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            t._mark_membership_approved(self._USER, self._GIG)
+        assert members.update_one.call_args[0][0]["crwd_id"] == t._oid(self._GIG)
+
+    def test_reports_false_when_nothing_matched(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        db = _fake_db({"added_crwd_members": self._members(matched=0)})
+        with patch.object(t.connection, "_db", return_value=db):
+            assert t._mark_membership_approved(self._USER, self._GIG) is False
+
+    def test_requires_both_ids(self):
+        assert t._mark_membership_approved("", self._GIG) is False
+        assert t._mark_membership_approved(self._USER, "") is False
+
+    def test_swallows_driver_errors(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        members = MagicMock()
+        members.update_one.side_effect = RuntimeError("mongo down")
+        db = _fake_db({"added_crwd_members": members})
+        with patch.object(t.connection, "_db", return_value=db):
+            assert t._mark_membership_approved(self._USER, self._GIG) is False

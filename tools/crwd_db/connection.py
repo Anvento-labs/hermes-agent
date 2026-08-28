@@ -32,7 +32,9 @@ COLL_GIG_STORE_ORDERS = "gig_store_orders"
 COLL_GIG_PRODUCT_REVIEWS = "gig_product_reviews"
 COLL_ORDER_RECEIPT_REVIEWS = "order_receipt_reviews"
 COLL_GIG_PARTICIPATIONS = "gig_participations"
-# Agent-owned. The only collection this package ever writes to.
+# Writes: proof_submissions (store_proof), users (_create_user, leads only),
+# added_crwd_members (_add_user_gig_interest, leads + crwd_db action;
+# _mark_membership_approved, from store_proof when a gig's proof completes).
 COLL_PROOFS = "proof_submissions"
 OBJECT_ID_IN_TEXT_RE = re.compile(r"\b[0-9a-fA-F]{24}\b")
 # custom_query is find/count only, so listing a collection here grants read access
@@ -60,13 +62,18 @@ USER_FIELDS = {
     "isBlocked": 1, "isDeleted": 1,
 }
 GIG_FIELDS = {
-    "name": 1, "description": 1, "gig_type": 1, "payout": 1, "price": 1,
+    "name": 1, "description": 1, "gig_type": 1, "payout": 1,
+    # Money CRWD fronts to buy the product, on the gigs that work that way.
+    # Backend-owned; absent on every gig until they ship it.
+    "product_funds": 1,
+    "price": 1,
     "gig_stores": 1, "start_date": 1, "end_date": 1, "type_of_work_proof": 1,
     "status": 1, "address": 1, "city": 1, "state": 1, "postal_code": 1,
     "image": 1, "isDeleted": 1, "isArchived": 1,
 }
 MEMBER_FIELDS = {
     "member": 1, "user_id": 1, "worker_id": 1, "crwd_id": 1, "status": 1,
+    "business_owner_id": 1, "isInterested": 1,
     "isAccepted": 1, "isApproved": 1, "isCompleted": 1, "hasPaid": 1,
     "isDeleted": 1, "createdAt": 1, "updatedAt": 1,
 }

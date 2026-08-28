@@ -27,7 +27,7 @@ from tools.crwd_db.connection import (
     check_crwd_db_requirements,
     reset_client,
 )
-from tools.crwd_db.users import _get_user
+from tools.crwd_db.users import _create_user, _get_user
 from tools.crwd_db.custom_query import _has_where, _redact_secrets
 from tools.crwd_db.gigs import (
     _STORE_REQUIREMENT_FLAGS,
@@ -40,7 +40,12 @@ from tools.crwd_db.gigs import (
     _slim_gig,
     _spots_full_gig_oids,
 )
-from tools.crwd_db.membership import _joined_member_filter, _sort_members_by_gig_end_date
+from tools.crwd_db.membership import (
+    _add_user_gig_interest,
+    _joined_member_filter,
+    _mark_membership_approved,
+    _sort_members_by_gig_end_date,
+)
 from tools.crwd_db.prefetch import (
     fetch_active_gigs,
     fetch_gig_details,
@@ -112,6 +117,9 @@ __all__ = [
     "_effective_payout",
     "_full_gig",
     "_get_enrolled_gig_ids",
+    "_add_user_gig_interest",
+    "_mark_membership_approved",
+    "_create_user",
     "_get_user",
     "_has_where",
     "_id_values",
