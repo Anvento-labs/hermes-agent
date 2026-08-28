@@ -78,6 +78,24 @@ _PRIVACY_ASK_RE = re.compile(
     r"whose\s+(?:account|gigs?|name|profile))\b",
     re.IGNORECASE,
 )
+
+# TEMPORARY BYPASS (not a fix) -- the cross-user privacy guard below decides
+# "foreign" by shape alone: any 24-hex ObjectId in the message that isn't the
+# member's own id is treated as another person's id, even though gigs,
+# products, and business-owner ids share that exact shape. The lead-intro
+# turn's prompt is Hermes's own synthetic text (crwd-lead-intro/SKILL.md +
+# this literal facts-block header from lead_turn.py::_facts_block) -- never
+# member-authored -- and it legitimately contains a gig_id plus words like
+# "payout"/"account", which trips the guard and blocks every crwd_db call for
+# real leads. Root cause is that the guard can't tell a gig id from a user id
+# without checking the database; the real fix is a DB-verified
+# "is this actually a different real user" check shared across all of
+# message_requests_other_member, not this string match. Tracked separately --
+# do not build further logic on top of this marker.
+LEAD_INGEST_MARKER = (
+    "[Lead ingest facts — the member did not type this. Do not quote this block.]"
+)
+
 # Gig/campaign entity lookups — ObjectId is a gig, not a member.
 _GIG_ENTITY_OID_RE = re.compile(
     r"\b(?:about|for|on|details?\s+(?:about|for))\s+(?:the\s+)?"
@@ -523,7 +541,11 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
         if not crwd_id:
             return {"context": "\n".join(status_lines)} if status_lines else None
         user_message = str(kwargs.get("user_message") or "")
-        cross_user = message_requests_other_member(user_message, crwd_id)
+        if LEAD_INGEST_MARKER in user_message:
+            # TEMPORARY BYPASS -- see LEAD_INGEST_MARKER's definition above.
+            cross_user = False
+        else:
+            cross_user = message_requests_other_member(user_message, crwd_id)
         if cross_user:
             _cross_user_request.set(True)
 
