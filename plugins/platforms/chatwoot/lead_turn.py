@@ -94,22 +94,28 @@ def _lead_event(adapter: Any, ctx: Mapping[str, Any]) -> MessageEvent:
     status = _truthy_status(ctx.get("conversation_status")) or "pending"
     name = str(ctx.get("full_name") or "").strip() or f"conversation {conv_id}"
     crwd_id = str(ctx.get("user_id") or "").strip()
+    # The real inbox ensure_conversation resolved -- API and SMS leads render
+    # differently downstream (SMS strips markdown + caps length at send time,
+    # per ChatwootAdapter._is_sms_conversation), so this must be the actual
+    # resolved channel, never assumed. Falls back only if ctx is missing it.
+    channel_type = str(ctx.get("channel_type") or LEADS_INBOX_CHANNEL).strip()
+    inbox_name = str(ctx.get("inbox_name") or "API").strip()
     source = adapter.build_source(
         chat_id=chat_id,
         chat_name=name,
         chat_type="direct",
         user_id=contact_id,
         user_name=name if ctx.get("full_name") else None,
-        chat_topic=f"inbox: API ({LEADS_INBOX_CHANNEL})",
+        chat_topic=f"inbox: {inbox_name} ({channel_type})",
     )
     raw = {
         "event": "lead_ingest",
-        "conversation": {"id": conv_id, "status": status, "channel": LEADS_INBOX_CHANNEL},
+        "conversation": {"id": conv_id, "status": status, "channel": channel_type},
         "sender": {
             "id": contact_id,
             "custom_attributes": {"joincrwd_user_id": crwd_id} if crwd_id else {},
         },
-        "inbox": {"id": ctx.get("inbox_id"), "channel_type": LEADS_INBOX_CHANNEL},
+        "inbox": {"id": ctx.get("inbox_id"), "channel_type": channel_type},
     }
     return MessageEvent(
         text=_build_prompt(ctx),
@@ -142,7 +148,10 @@ async def dispatch_lead_turn(adapter: Any, ctx: Dict[str, Any]) -> None:
     chat_id = str(ctx.get("chat_id") or "").strip()
     remember = getattr(adapter, "_remember_channel", None)
     if callable(remember):
-        remember(chat_id, LEADS_INBOX_CHANNEL)
+        # Must be the real resolved channel (see _lead_event) -- this is what
+        # send()-time formatting checks for the rest of the thread, not just
+        # this first reply.
+        remember(chat_id, str(ctx.get("channel_type") or LEADS_INBOX_CHANNEL).strip())
     try:
         from plugins.platforms.chatwoot import coach_context
 

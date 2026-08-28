@@ -1,8 +1,10 @@
-"""Find or create a Chatwoot conversation for a CRWD lead (API inbox).
+"""Find or create a Chatwoot conversation for a CRWD lead.
 
 Called from ``leads.py`` after user upsert + gig interest. Not an LLM tool.
-This slice targets ``Channel::Api`` only; flip ``LEADS_INBOX_CHANNEL`` later
-for SMS.
+Targets ``Channel::Api`` and ``Channel::TwilioSms`` inboxes -- set
+``CHATWOOT_INBOX_ID`` to pin a specific one when an account has more than one
+eligible inbox (e.g. prod, which wants leads routed to a specific SMS inbox,
+not its unused API-only inbox).
 """
 
 from __future__ import annotations
@@ -15,7 +17,14 @@ from plugins.platforms.chatwoot.client import account_id, api_request, user_toke
 
 logger = logging.getLogger(__name__)
 
-# Switch this (and source_id rules) to ``Channel::TwilioSms`` / ``Channel::Sms`` later.
+# Inbox channel types eligible to host a lead conversation. CHATWOOT_INBOX_ID
+# must name an inbox of one of these types; auto-detection (no
+# CHATWOOT_INBOX_ID set) only considers inboxes of these types too.
+LEADS_INBOX_CHANNELS = frozenset({"Channel::Api", "Channel::TwilioSms"})
+
+# Fallback channel/inbox label only used if a caller's ctx is missing the
+# real resolved values (should not happen in practice -- ensure_conversation
+# always returns them). Never trust this over ctx.get("channel_type").
 LEADS_INBOX_CHANNEL = "Channel::Api"
 
 _JOINCRWD_USER_ID = "joincrwd_user_id"
@@ -96,11 +105,12 @@ def _list_inboxes(acct: str) -> Tuple[Optional[List[Dict[str, Any]]], str]:
 
 
 def resolve_api_inbox(acct: str) -> Tuple[Optional[Dict[str, Any]], str]:
-    """Return the target API inbox, or ``(None, error)``."""
+    """Return the target lead-conversation inbox, or ``(None, error)``."""
     inboxes, err = _list_inboxes(acct)
     if err:
         return None, err
-    api_inboxes = [i for i in inboxes if _channel_type(i) == LEADS_INBOX_CHANNEL]
+    eligible = [i for i in inboxes if _channel_type(i) in LEADS_INBOX_CHANNELS]
+    allowed = ", ".join(sorted(LEADS_INBOX_CHANNELS))
     preferred = (
         os.getenv("CHATWOOT_INBOX_ID", "") or ""
     ).strip()
@@ -108,21 +118,21 @@ def resolve_api_inbox(acct: str) -> Tuple[Optional[Dict[str, Any]], str]:
         match = next((i for i in inboxes if _inbox_id_of(i) == preferred), None)
         if match is None:
             return None, f"CHATWOOT_INBOX_ID={preferred} not found on account {acct}"
-        if _channel_type(match) != LEADS_INBOX_CHANNEL:
+        if _channel_type(match) not in LEADS_INBOX_CHANNELS:
             return None, (
                 f"CHATWOOT_INBOX_ID={preferred} is {_channel_type(match) or 'unknown'}, "
-                f"expected {LEADS_INBOX_CHANNEL}"
+                f"expected one of: {allowed}"
             )
         return match, ""
-    if len(api_inboxes) == 1:
-        return api_inboxes[0], ""
-    if not api_inboxes:
-        return None, f"no {LEADS_INBOX_CHANNEL} inbox on account {acct}"
+    if len(eligible) == 1:
+        return eligible[0], ""
+    if not eligible:
+        return None, f"no inbox of type {allowed} on account {acct}"
     names = ", ".join(
-        f"{_inbox_id_of(i)}:{i.get('name') or '?'}" for i in api_inboxes
+        f"{_inbox_id_of(i)}:{i.get('name') or '?'}" for i in eligible
     )
     return None, (
-        f"multiple {LEADS_INBOX_CHANNEL} inboxes ({names}); set CHATWOOT_INBOX_ID"
+        f"multiple eligible inboxes ({names}); set CHATWOOT_INBOX_ID"
     )
 
 
@@ -466,6 +476,8 @@ def ensure_conversation(
             "contact_id": contact_id,
             "conversation_id": conv_id,
             "inbox_id": inbox_id,
+            "channel_type": _channel_type(inbox),
+            "inbox_name": inbox.get("name"),
             "chat_id": f"{acct}:{conv_id}",
             "created": False,
             "contact_created": created_contact,
@@ -492,6 +504,8 @@ def ensure_conversation(
         "contact_id": contact_id,
         "conversation_id": conv_id,
         "inbox_id": inbox_id,
+        "channel_type": _channel_type(inbox),
+        "inbox_name": inbox.get("name"),
         "chat_id": f"{acct}:{conv_id}",
         "created": True,
         "contact_created": created_contact,
