@@ -36,7 +36,7 @@ _STATUS_MAX = 2048
 _status_cache: "OrderedDict[str, Tuple[bool, float]]" = OrderedDict()
 
 # Canned-reply cooldown: chat_id -> monotonic ts of last signup reply.
-_COOLDOWN_S = 600.0
+_COOLDOWN_S = 24 * 3600  # 24 hours
 _COOLDOWN_MAX = 2048
 _last_replied: "OrderedDict[str, float]" = OrderedDict()
 
