@@ -367,3 +367,53 @@ class TestStatusHandoffGuard:
     def test_bind_normalizes_status(self):
         cc.bind_webhook_conversation_status("  Resolved ")
         assert cc.webhook_conversation_status() == "resolved"
+
+    def test_injects_campaign_code_miss_copy(self, chatwoot_env):
+        miss = '{"_type":"campaign_code_match","query":"FRGP","items":[],"error":null}'
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ), patch(
+            "tools.crwd_db.gigs._lookup_campaign_code", return_value=miss
+        ):
+            out = cc.member_context_hook(
+                platform="chatwoot", sender_id="55", user_message="FRGP"
+            )
+        assert out is not None
+        assert "Campaign code lookup" in out["context"]
+        assert "no matching active gig" in out["context"]
+        assert "doesn’t match any active campaign" in out["context"]
+
+    def test_records_interest_on_campaign_code_hit(self, chatwoot_env):
+        hit = (
+            '{"_type":"campaign_code_match","query":"ROGUETT","items":'
+            '[{"_id":"69b8614f1083b9302fd0a9a7","name":"[Rogue](https://x/explore/69b8614f1083b9302fd0a9a7)",'
+            '"effective_payout":10,"end_date":"2026-10-01","stores":[]}],"error":null}'
+        )
+        interest = '{"_type":"user_gig_interest","created":true,"items":[{}],"error":null}'
+        with patch.object(cc, "resolve_member_crwd_id", return_value="aaaaaaaaaaaaaaaaaaaaaaaa"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ), patch(
+            "tools.crwd_db.gigs._lookup_campaign_code", return_value=hit
+        ), patch(
+            "tools.crwd_db.membership._add_user_gig_interest", return_value=interest
+        ) as add_interest:
+            out = cc.member_context_hook(
+                platform="chatwoot", sender_id="55", user_message="RoGUEtt"
+            )
+        assert out is not None
+        assert "one matching active gig" in out["context"]
+        assert "69b8614f1083b9302fd0a9a7" in out["context"]
+        add_interest.assert_called_once()
+
+    def test_yes_is_not_a_campaign_code(self, chatwoot_env):
+        with patch.object(cc, "resolve_member_crwd_id", return_value="abc123"), patch.object(
+            cc, "_fetch_member_location", return_value=None
+        ), patch(
+            "tools.crwd_db.gigs._lookup_campaign_code"
+        ) as lookup:
+            out = cc.member_context_hook(
+                platform="chatwoot", sender_id="55", user_message="yes"
+            )
+        assert out is not None
+        assert "Campaign code lookup" not in out["context"]
+        lookup.assert_not_called()

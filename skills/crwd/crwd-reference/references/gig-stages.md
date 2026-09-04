@@ -20,7 +20,8 @@ and injected as `[CRWD gig context]` on Chatwoot gig-related turns.
 
 ## Acceptance does not gate progression (`added_crwd_members`)
 
-A member marked Interested — by lead ingest, or `add_user_gig_interest` — buys the
+A member marked Interested — by lead ingest, Coach `add_user_gig_interest`
+(including a matching campaign code), or the same action mid-chat — buys the
 product and submits proof on exactly the same path as an accepted member. There is
 no "wait to be accepted first" step, and no stage that parks them.
 
@@ -68,8 +69,9 @@ that they were never accepted reads as a problem, and it contradicts what
 
 `added_crwd_members` has exactly two Hermes writers:
 
-- `_add_user_gig_interest` — inserts the initial Interested row (lead ingest or the
-  `add_user_gig_interest` action).
+- `_add_user_gig_interest` — inserts the initial Interested row (lead ingest,
+  Coach `add_user_gig_interest` after `lookup_campaign_code`, or the same action
+  mid-chat).
 - `_mark_membership_approved` — called only from `store_proof` on gig-proof
   completion. Sets `isApproved` (and `updatedAt`) and nothing else; skips rows that
   already carry a `rejectionReason`, since CRWD reads rejected as *rejectionReason

@@ -29,6 +29,7 @@ _USER_SCOPED_ACTIONS = frozenset({
     "get_user_receipts",
     "get_user_notifications",
     "list_active_gigs",
+    "add_user_gig_interest",
 })
 
 _PRIVATE_COLLECTIONS = frozenset({

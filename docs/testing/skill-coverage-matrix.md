@@ -26,6 +26,8 @@ Finding/understanding gigs, applying, approval status, store lookup.
     "what's open that I haven't applied to"
   - `crwd_db` `list_active_gigs(user_id, offset=next_offset)` — Destiny's "show
     me more," confirming `has_more` is only declared false when true
+  - `crwd_db` `lookup_campaign_code` then `add_user_gig_interest` — a short
+    campaign-code reply (hit records Interested; miss offers browse)
   - `web_search` (+ `web_extract` if needed) — Jasmine's nearest Walmart:
     name, address, phone, hours
 - **What it proves:** real payout/deadline/store data every time (never

@@ -1,7 +1,7 @@
 ---
 name: crwd-gig-discovery
-description: "Coach a CRWD member on assigned gigs (status, next step) and find open gigs to join — details, apply, acceptance, and store location for live gigs. Use when they ask what to do, help with gigs, what's available, what they have, about a specific gig, or where the store is."
-version: 2.1.2
+description: "Coach a CRWD member on assigned gigs (status, next step) and find open gigs to join — details, apply, acceptance, and store location for live gigs. Use when they ask what to do, help with gigs, what's available, what they have, about a specific gig, where the store is, or when they reply with a short campaign code."
+version: 2.2.0
 metadata:
   hermes:
     tags: [crwd, gigs, campaigns, coach, browse, apply, acceptance, payout, deadline, store, walmart, target, location, nearest, hours, stock]
@@ -26,6 +26,7 @@ is in progress — support both.
 - "What should I do?" / "Help with my gigs" / "Anything for me?"
 - "What gigs are available?" / "Any new gigs?" / "Any new gigs while I wait?"
 - "Tell me about the [X] gig" — payout, deadline, store, what's involved
+- A short campaign code as the whole message (e.g. ROGUETT, FFDD) — not a gig title or a sentence
 - "How do I apply?" / "Am I approved yet?"
 - "What gigs do I have?" / "What are my active gigs?"
 - "What are my waitlisted gigs?" / "What gigs are pending approval?"
@@ -37,6 +38,11 @@ is in progress — support both.
 
 Route by intent — keep Home vs Explore **labeled**, not forever exclusive:
 
+- **Campaign code** — the whole message is a short opaque token, not a sentence,
+  gig title, or "what's available?" Handle **before** vague coach, Home vs Explore
+  `clarify`, or `list_active_gigs`. If the last **coach** message already asked a
+  yes/no (show more gigs?), answer that — `yes` is not a code. Otherwise use the
+  campaign-code block below.
 - **Clear assigned / my gigs** ("what am I in?", "my active gigs", "pending approval",
   "my history") → assigned tools only (steps 3–5). Do not mix open Explore gigs into
   a pure Home answer.
@@ -56,6 +62,24 @@ Route by intent — keep Home vs Explore **labeled**, not forever exclusive:
   `["Ones I'm already in", "Open gigs I can join"]`. Do **not** clarify away a
   coach turn — use the two-section reply instead.
 
+**Campaign code:** do not fuzzy-match with `get_gig_details` first. On Chatwoot a
+`[Campaign code lookup]` context block may already be present — follow that
+result (miss copy or confirm interest from the injected gig). If it is not
+present, call `lookup_campaign_code` with the token they sent (trim surrounding
+spaces only).
+
+- **Hit** (one active gig): `add_user_gig_interest` with `user_id` from
+  `[CRWD member]` and that gig's `_id`. A reused row (`created: false`) is fine.
+  Then confirm they are interested and show the linked title, payout, deadline,
+  and `[Product](product_url)`. If they already had a membership, quote
+  `next_step` from `get_user_gig_status` instead of implying a new apply.
+- **Miss** (empty `items`): do not pick a similar gig. Say:
+  *Looks like a campaign code — that one doesn’t match any active campaign. Want
+  me to show gigs you can join?* On yes → `list_active_gigs` with `user_id`.
+- Two candidates (rare): ask which `_id` before recording interest.
+
+Never mention Mongo, field names, or Chatwoot to the member.
+
 After a clear answer, optionally offer one engaging follow-up (next step, or a
 reminder via `crwd-reminders-followups`).
 
@@ -70,7 +94,8 @@ reminder via `crwd-reminders-followups`).
    questions before listing — just show open gigs.
 2. **A specific gig by name/text:** `get_gig_details` (fuzzy-matches, returns ranked
    candidates with an `_id`). **Confirm the right `_id`** before you quote details or use it
-   elsewhere — if two candidates are close, ask which one they mean.
+   elsewhere — if two candidates are close, ask which one they mean. A short campaign
+   code is **not** this path — use `lookup_campaign_code` (block above).
 3. **"Am I accepted yet?" — the acceptance question only:** Call `get_waitlisted_gigs`
    **before you reply** with `user_id` from the `[CRWD member]` context line — do not
    reuse an earlier message's tool result in this chat. Returns gigs CRWD hasn't accepted
@@ -166,6 +191,11 @@ For the deeper lifecycle detail, load
 ## Pitfalls
 
 - Don't quote a gig's payout/deadline from memory — look it up.
+- **A campaign code is not a gig name.** Do not `get_gig_details` or
+  `list_active_gigs` first. On a miss, do not fuzzy-pick a gig — use the miss
+  copy and offer to browse. `yes` after you asked to show more gigs is that
+  answer, not a code. Never mention Mongo, field names, or Chatwoot to the
+  member.
 - **Gig SMS while you are already helping with gigs:** if they mention a text
   about a gig, load `skill_view("crwd-reference", "references/company-facts.md")`
   and match the sender by last 10 digits. A matching official number is still
@@ -239,6 +269,10 @@ For the deeper lifecycle detail, load
   availability answers did not mix in enrolled gigs.
 - "Show me more" used `next_offset` from the prior page when more gigs existed.
 - You confirmed the specific gig `_id` when there was any ambiguity.
+- A campaign-code reply used `lookup_campaign_code` (not `get_gig_details` first).
+  A hit called `add_user_gig_interest` then showed linked title + payout +
+  deadline + products. A miss used the active-campaign miss copy and offered
+  browse — no invented gig. You did not mention Mongo, field names, or Chatwoot.
 - The member knows their current step in the flow and what to do next (quoted
   `next_step` where relevant; how-to pointed at `crwd-gig-execution`).
 - **Every gig named in the reply has a clickable markdown title.** If any gig would
