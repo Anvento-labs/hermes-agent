@@ -9,7 +9,7 @@ from tools.registry import tool_error
 
 from tools.crwd_db.connection import _HARD_LIMIT, check_crwd_db_requirements
 from tools.crwd_db.custom_query import _custom_query
-from tools.crwd_db.gigs import _get_gig_details, _list_active_gigs
+from tools.crwd_db.gigs import _get_gig_details, _list_active_gigs, _lookup_campaign_code
 from tools.crwd_db.membership import (
     _add_user_gig_interest,
     _get_user_gig_history,
@@ -52,6 +52,8 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 top_n=args.get("top_n", 3),
                 full=bool(args.get("full")),
             )
+        if action == "lookup_campaign_code":
+            return _lookup_campaign_code(query=args.get("query", ""))
         if action == "get_user":
             return _get_user(identifier=args.get("identifier", ""))
         if action == "get_user_gigs":
@@ -145,7 +147,8 @@ def crwd_db_tool(args: Dict[str, Any], **_kw: Any) -> str:
                 limit=args.get("limit", 20),
             )
         return tool_error(
-            "Unknown action. Use: list_active_gigs, get_gig_details, get_user, "
+            "Unknown action. Use: list_active_gigs, get_gig_details, "
+            "lookup_campaign_code, get_user, "
             "get_user_gigs, get_user_gig_history, get_waitlisted_gigs, get_user_gig_status, "
             "get_user_products, get_user_receipts, get_user_notifications, "
             "store_proof, get_user_proofs, check_duplicate_proof, find_proof, "

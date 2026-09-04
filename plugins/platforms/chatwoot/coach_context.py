@@ -610,6 +610,10 @@ def member_context_hook(**kwargs: Any) -> Optional[Dict[str, str]]:
                 ),
                 "- Do NOT call crwd_db or reveal any of the authenticated member's data in this turn.",
             ])
+        if not cross_user:
+            from plugins.platforms.chatwoot.campaign_code import campaign_code_context_lines
+
+            lines.extend(campaign_code_context_lines(user_message, crwd_id))
         if status_lines:
             lines.extend(status_lines)
         return {"context": "\n".join(lines)}

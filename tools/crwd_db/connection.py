@@ -70,6 +70,8 @@ GIG_FIELDS = {
     "gig_stores": 1, "start_date": 1, "end_date": 1, "type_of_work_proof": 1,
     "status": 1, "address": 1, "city": 1, "state": 1, "postal_code": 1,
     "image": 1, "isDeleted": 1, "isArchived": 1,
+    # Opaque outreach code (backend-owned). Exact whole-string match, case-insensitive.
+    "campaign_code": 1,
 }
 MEMBER_FIELDS = {
     "member": 1, "user_id": 1, "worker_id": 1, "crwd_id": 1, "status": 1,

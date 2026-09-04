@@ -449,3 +449,41 @@ def _get_gig_details(query: str, top_n: int = 3, full: bool = False) -> str:
         {"_type": "gig_match_candidates", "query": query, "items": items},
         ensure_ascii=False,
     )
+
+
+def _campaign_code_query(code: str) -> Optional[Dict[str, Any]]:
+    """Filter for an exact whole-string ``campaign_code`` on an open gig.
+
+    Case-insensitive. Surrounding whitespace is trimmed; the rest is a
+    literal (regex metacharacters escaped). Substrings do not match.
+    """
+    token = (code or "").strip()
+    if not token:
+        return None
+    return {
+        **_open_gig_filter(),
+        "campaign_code": {"$regex": f"^{re.escape(token)}$", "$options": "i"},
+    }
+
+
+def _lookup_campaign_code(query: str = "") -> str:
+    """Resolve an opaque campaign code to active gig(s). Not fuzzy name match."""
+    token = (query or "").strip()
+    if not token:
+        return tool_error("query is required for lookup_campaign_code")
+    filt = _campaign_code_query(token)
+    if filt is None:
+        return tool_error("query is required for lookup_campaign_code")
+    cursor = _conn._db()[_COLL_CRWDS].find(
+        filt, _GIG_FIELDS, max_time_ms=_MAX_TIME_MS
+    )
+    items = [_slim_gig(g) for g in cursor]
+    return json.dumps(
+        {
+            "_type": "campaign_code_match",
+            "query": token,
+            "items": items,
+            "error": None,
+        },
+        ensure_ascii=False,
+    )
