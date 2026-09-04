@@ -1,6 +1,7 @@
 """Tests for the crwd_db tool module (no live database required)."""
 
 import json
+import re
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -2353,6 +2354,100 @@ class TestAddUserGigInterest:
         with patch.object(t.connection, "_db", return_value=db):
             t._add_user_gig_interest(user_id=self._USER, crwd_id=self._GIG)
         assert members.insert_one.call_args[0][0]["business_owner_id"] == owner_oid
+
+
+class TestLookupCampaignCode:
+    """Exact whole-string campaign_code match, case-insensitive, active gigs only."""
+
+    _GIG = "69b8614f1083b9302fd0a9a7"
+    _STORED = "ROGUETT"
+
+    def test_in_schema_enum(self):
+        assert "lookup_campaign_code" in t.CRWD_DB_SCHEMA["parameters"]["properties"]["action"]["enum"]
+
+    def test_requires_query(self, monkeypatch):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        out = json.loads(t.crwd_db_tool({"action": "lookup_campaign_code"}))
+        assert "query" in out["error"]
+        out = json.loads(t.crwd_db_tool({"action": "lookup_campaign_code", "query": "   "}))
+        assert "query" in out["error"]
+
+    def test_filter_is_exact_case_insensitive_and_open_only(self):
+        filt = t._campaign_code_query("  RoGUEtt  ")
+        assert filt is not None
+        assert filt["isDeleted"] == {"$ne": True}
+        assert filt["isArchived"] == {"$ne": True}
+        assert filt["status"] == {"$regex": r"^active$", "$options": "i"}
+        assert "$or" in filt
+        code = filt["campaign_code"]
+        assert code["$options"] == "i"
+        assert code["$regex"] == "^RoGUEtt$"
+
+    def test_roguett_case_variants_match_stored_not_substrings(self):
+        stored = self._STORED
+        for typed in ("ROGUETT", "RoGUEtt", "roguett", "  ROGUETT  "):
+            filt = t._campaign_code_query(typed)
+            pattern = re.compile(filt["campaign_code"]["$regex"], re.I)
+            assert pattern.fullmatch(stored), typed
+        for miss in ("ROGUE", "FFD", "ROGUETT extra", "TT", "roguett!"):
+            filt = t._campaign_code_query(miss)
+            pattern = re.compile(filt["campaign_code"]["$regex"], re.I)
+            assert not pattern.fullmatch(stored), miss
+
+    def test_regex_metacharacters_are_literal(self):
+        filt = t._campaign_code_query("ROGUE.TT")
+        assert filt["campaign_code"]["$regex"] == r"^ROGUE\.TT$"
+        pattern = re.compile(filt["campaign_code"]["$regex"], re.I)
+        assert not pattern.fullmatch("ROGUEXTT")
+
+    def _run_lookup(self, monkeypatch, typed, docs):
+        monkeypatch.setenv("CRWD_MONGO_URI", "mongodb://x/")
+        mock_crwds = MagicMock()
+        mock_crwds.find.return_value = docs
+        with patch.object(t.connection, "_db", return_value=_fake_db({"crwds": mock_crwds})):
+            out = json.loads(t.crwd_db_tool({
+                "action": "lookup_campaign_code",
+                "query": typed,
+            }))
+        return out, mock_crwds
+
+    def test_same_gig_for_case_variants(self, monkeypatch):
+        gig_oid = t._oid(self._GIG)
+        doc = {
+            "_id": gig_oid,
+            "name": "Roguet Tasting",
+            "campaign_code": self._STORED,
+            "gig_stores": [],
+            "status": "Active",
+        }
+        seen_filters = []
+        for typed in ("ROGUETT", "RoGUEtt", "roguett"):
+            out, mock_crwds = self._run_lookup(monkeypatch, typed, [doc])
+            assert out["_type"] == "campaign_code_match"
+            assert out["query"] == typed
+            assert len(out["items"]) == 1
+            assert out["items"][0]["_id"] == self._GIG
+            filt = mock_crwds.find.call_args[0][0]
+            seen_filters.append(filt["campaign_code"]["$regex"])
+            pattern = re.compile(filt["campaign_code"]["$regex"], re.I)
+            assert pattern.fullmatch(self._STORED)
+        assert seen_filters == ["^ROGUETT$", "^RoGUEtt$", "^roguett$"]
+
+    def test_miss_returns_empty_items(self, monkeypatch):
+        out, mock_crwds = self._run_lookup(monkeypatch, "ROGUE", [])
+        assert out["items"] == []
+        assert out["error"] is None
+        filt = mock_crwds.find.call_args[0][0]
+        assert filt["campaign_code"]["$regex"] == "^ROGUE$"
+        assert filt["isArchived"] == {"$ne": True}
+
+    def test_multiple_candidates(self, monkeypatch):
+        docs = [
+            {"_id": t._oid("aaaaaaaaaaaaaaaaaaaaaaaa"), "name": "A", "gig_stores": []},
+            {"_id": t._oid("bbbbbbbbbbbbbbbbbbbbbbbb"), "name": "B", "gig_stores": []},
+        ]
+        out, _ = self._run_lookup(monkeypatch, "FFDD", docs)
+        assert len(out["items"]) == 2
 
 
 class TestMarkMembershipApproved:

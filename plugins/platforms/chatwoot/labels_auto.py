@@ -222,6 +222,7 @@ _CONTEXTUAL_CRWD_ACTIONS = frozenset({
     "get_user_gig_history",
     "get_waitlisted_gigs",
     "get_gig_details",
+    "lookup_campaign_code",
     "list_active_gigs",
     "get_user",
 })
@@ -236,6 +237,7 @@ _SOFT_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "get_user_gig_history": "gig history lookup (context only)",
     "get_waitlisted_gigs": "waitlisted gigs lookup (context only)",
     "get_gig_details": "gig details lookup (context only)",
+    "lookup_campaign_code": "campaign code lookup (context only)",
     "list_active_gigs": "open gigs browse lookup (context only)",
     "get_user_receipts": "receipts lookup (context only)",
     "get_user_transfers": "payout lookup (context only)",
@@ -403,6 +405,7 @@ def soft_tool_facts(
             continue
         if gig_hint and action in {
             "get_gig_details",
+            "lookup_campaign_code",
             "get_user_gig_status",
             "list_active_gigs",
             "get_user_gigs",

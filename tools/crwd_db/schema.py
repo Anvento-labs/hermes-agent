@@ -15,6 +15,7 @@ CRWD_DB_SCHEMA = {
         "get_user_gig_status = enrolled/in-progress — if intent between those two is "
         "unclear, ask via clarify before choosing. "
         "Use the specific action if it fits (list_active_gigs, get_gig_details, "
+        "lookup_campaign_code, "
         "get_user, get_user_gigs, get_user_gig_history, get_waitlisted_gigs, get_user_gig_status, "
         "get_user_products, "
         "get_user_receipts, get_user_notifications); use custom_query only when none of the "
@@ -22,7 +23,11 @@ CRWD_DB_SCHEMA = {
         "exclude gigs the member already has a membership for, and offset for "
         "pagination; it returns has_more and next_offset for the next page. "
         "get_gig_details fuzzy-matches gig names and returns ranked candidates "
-        "(set full=true or top_n=1 for the full gig payload). Each store carries a "
+        "(set full=true or top_n=1 for the full gig payload). "
+        "lookup_campaign_code matches an opaque campaign code on an active gig "
+        "(exact whole string, not case-sensitive — not a fuzzy name match and not "
+        "a substring). On a hit, call add_user_gig_interest with user_id and the "
+        "gig _id. Each store carries a "
         "requirements dict (requires_receipt, requires_review_link, requires_review_rating, "
         "requires_ugc_post, ...) — these flags are the gig's proof spec; use them, not "
         "type_of_work_proof, which is unset on almost every gig. A gig may also carry "
@@ -77,7 +82,7 @@ CRWD_DB_SCHEMA = {
             "action": {
                 "type": "string",
                 "enum": [
-                    "list_active_gigs", "get_gig_details", "get_user",
+                    "list_active_gigs", "get_gig_details", "lookup_campaign_code", "get_user",
                     "get_user_gigs", "get_user_gig_history", "get_waitlisted_gigs",
                     "get_user_gig_status",
                     "get_user_products",
@@ -142,7 +147,14 @@ CRWD_DB_SCHEMA = {
                     "only so existing callers don't break."
                 ),
             },
-            "query": {"type": "string", "description": "gig _id, name, or free text to fuzzy-match (get_gig_details)"},
+            "query": {
+                "type": "string",
+                "description": (
+                    "gig _id, name, or free text to fuzzy-match (get_gig_details); "
+                    "opaque campaign code, exact whole-string match, case-insensitive "
+                    "(lookup_campaign_code)"
+                ),
+            },
             "top_n": {"type": "integer", "description": "max candidates to return, default 3, max 10 (get_gig_details)"},
             "full": {
                 "type": "boolean",

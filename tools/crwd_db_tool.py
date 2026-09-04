@@ -31,9 +31,11 @@ from tools.crwd_db.users import _create_user, _get_user
 from tools.crwd_db.custom_query import _has_where, _redact_secrets
 from tools.crwd_db.gigs import (
     _STORE_REQUIREMENT_FLAGS,
+    _campaign_code_query,
     _effective_payout,
     _full_gig,
     _get_enrolled_gig_ids,
+    _lookup_campaign_code,
     _normalize,
     _open_gig_filter,
     _score,
@@ -135,4 +137,6 @@ __all__ = [
     "_slim_gig",
     "_sort_members_by_gig_end_date",
     "_spots_full_gig_oids",
+    "_campaign_code_query",
+    "_lookup_campaign_code",
 ]

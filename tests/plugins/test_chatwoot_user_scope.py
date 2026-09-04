@@ -115,6 +115,21 @@ class TestToolRequestMiddleware:
             out = us.on_tool_request(tool_name="crwd_db", args=args)
         assert out is None
 
+    def test_allows_lookup_campaign_code_unchanged(self, chatwoot_session):
+        args = {"action": "lookup_campaign_code", "query": "ROGUETT"}
+        with patch.object(us, "resolved_member_id", return_value="memberabc"):
+            out = us.on_tool_request(tool_name="crwd_db", args=args)
+        assert out is None
+
+    def test_rewrites_add_user_gig_interest_when_user_id_missing(self, chatwoot_session):
+        with patch.object(us, "resolved_member_id", return_value="memberabc"):
+            out = us.on_tool_request(
+                tool_name="crwd_db",
+                args={"action": "add_user_gig_interest", "crwd_id": "69b8614f1083b9302fd0a9a7"},
+            )
+        assert out is not None
+        assert out["args"]["user_id"] == "memberabc"
+
 
 class TestPreToolCallBlock:
     def test_blocks_custom_query_on_users(self, chatwoot_session):
